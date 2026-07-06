@@ -1,0 +1,52 @@
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    container_name: ragsearch-db
+    environment:
+      POSTGRES_USER: ragsearch
+      POSTGRES_PASSWORD: ragsearch
+      POSTGRES_DB: ragsearch
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ragsearch -d ragsearch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: ragsearch-api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ragsearch:ragsearch@db:5432/ragsearch
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: gpt-4.1-nano
+      OPENAI_EMBEDDINGS_API_KEY: ${OPENAI_EMBEDDINGS_API_KEY:-}
+      OPENAI_EMBEDDINGS_MODEL: text-embedding-3-small
+      RUN_MIGRATIONS: "1"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ragsearch-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  db_data:

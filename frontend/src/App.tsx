@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  type ChatMessage,
+  type ChatSource,
   type Client,
   type ClientPage,
   type DocumentItem,
@@ -7,9 +9,11 @@ import {
   type SearchResult,
   createClient,
   createDocument,
+  getDocument,
   listClients,
   listDocuments,
   search,
+  streamChat,
 } from "./api";
 
 type Mode = "list" | "search";
@@ -32,6 +36,15 @@ interface DocFormData {
 const EMPTY_CLIENT_FORM: ClientFormData = { first_name: "", last_name: "", email: "", description: "", social_links: "" };
 const EMPTY_DOC_FORM: DocFormData = { client_email: "", title: "", content: "" };
 
+function isSafeUrl(link: string): boolean {
+  try {
+    const url = new URL(link);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const [mode, setMode] = useState<Mode>("list");
   const [tab, setTab] = useState<Tab>("clients");
@@ -49,6 +62,30 @@ export default function App() {
 
   const [showClientForm, setShowClientForm] = useState(false);
   const [showDocForm, setShowDocForm] = useState(false);
+
+  const [expandedDocs, setExpandedDocs] = useState<Record<string, DocumentItem | null>>({});
+
+  const toggleDoc = useCallback(async (docId: string) => {
+    if (expandedDocs[docId] !== undefined) {
+      setExpandedDocs((prev) => {
+        const next = { ...prev };
+        delete next[docId];
+        return next;
+      });
+      return;
+    }
+    setExpandedDocs((prev) => ({ ...prev, [docId]: null }));
+    try {
+      const doc = await getDocument(docId);
+      setExpandedDocs((prev) => ({ ...prev, [docId]: doc }));
+    } catch {
+      setExpandedDocs((prev) => {
+        const next = { ...prev };
+        delete next[docId];
+        return next;
+      });
+    }
+  }, [expandedDocs]);
   const [clientForm, setClientForm] = useState<ClientFormData>(EMPTY_CLIENT_FORM);
   const [docForm, setDocForm] = useState<DocFormData>(EMPTY_DOC_FORM);
   const [formError, setFormError] = useState<string | null>(null);
@@ -57,6 +94,61 @@ export default function App() {
   const clientCursorHistory = useRef<string[]>([]);
   const docCursorHistory = useRef<string[]>([]);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const streamAbort = useRef<AbortController | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const handleSendMessage = useCallback(async () => {
+    const q = chatInput.trim();
+    if (!q || streaming) return;
+    setChatInput("");
+    setChatError(null);
+    setStreaming(true);
+
+    const userMsg: ChatMessage = { role: "user", content: q };
+    const assistantMsg: ChatMessage = { role: "assistant", content: "" };
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+    let sources: ChatSource[] = [];
+    const msgIndex = messages.length + 1;
+
+    const ctrl = streamChat(
+      q,
+      (token) => {
+        setMessages((prev) => {
+          const next = [...prev];
+          next[msgIndex] = { ...next[msgIndex], content: next[msgIndex].content + token };
+          return next;
+        });
+      },
+      (srcs) => {
+        sources = srcs;
+      },
+      () => {
+        setMessages((prev) => {
+          const next = [...prev];
+          next[msgIndex] = { ...next[msgIndex], sources };
+          return next;
+        });
+        setStreaming(false);
+        setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      },
+      (err) => {
+        setChatError(err);
+        setMessages((prev) => {
+          const next = [...prev];
+          next[msgIndex] = { ...next[msgIndex], content: "[Error: " + err + "]" };
+          return next;
+        });
+        setStreaming(false);
+      },
+    );
+    streamAbort.current = ctrl;
+  }, [chatInput, streaming, messages.length]);
 
   const loadClients = useCallback(async (reset: boolean = false) => {
     setLoading(true);
@@ -201,6 +293,8 @@ export default function App() {
   const docCount = searchResults.filter((r) => r.type === "document").length;
 
   return (
+    <div className="main-layout">
+      <div className="left-panel">
     <div className="container">
       <h1>RAG Search — WealthTech</h1>
       <p className="subtitle">Hybrid search across clients &amp; documents · RRF-fused retrieval</p>
@@ -265,12 +359,38 @@ export default function App() {
                 <>
                   <div className="result-sub">{r.client.email}</div>
                   {r.client.description && <div className="result-desc">{r.client.description}</div>}
+                  {r.client.social_links && r.client.social_links.length > 0 && (
+                    <div className="result-desc">
+                      {r.client.social_links.map((link: string) =>
+                        isSafeUrl(link) ? (
+                          <a key={link} className="social-link" href={link}
+                             target="_blank" rel="noopener noreferrer">{link}</a>
+                        ) : (
+                          <span key={link} className="social-link social-link-unsafe"
+                                title="Unsafe URL blocked">{link}</span>
+                        )
+                      )}
+                    </div>
+                  )}
                 </>
               )}
               {r.type === "document" && r.document && (
                 <>
-                  <div className="result-sub">Chunk #{r.document.chunk_index}</div>
-                  <div className="result-desc">{r.document.content.slice(0, 200)}</div>
+                  <div className="result-sub">
+                    {r.document.title} · Chunk #{r.document.chunk_index}
+                  </div>
+                  <div className="result-desc">{r.document.content}</div>
+                  <button className="btn-link"
+                    onClick={() => toggleDoc(r.document!.document_id)}>
+                    {expandedDocs[r.document!.document_id] !== undefined
+                      ? "Hide full document"
+                      : "View full document"}
+                  </button>
+                  {expandedDocs[r.document!.document_id] && (
+                    <div className="doc-content">
+                      {expandedDocs[r.document!.document_id]!.content}
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -297,6 +417,19 @@ export default function App() {
               )}
               {tab === "clients" && (item as Client).description && (
                 <div className="result-desc">{(item as Client).description}</div>
+              )}
+              {tab === "clients" && (item as Client).social_links && (item as Client).social_links!.length > 0 && (
+                <div className="result-desc">
+                  {(item as Client).social_links!.map((link) =>
+                    isSafeUrl(link) ? (
+                      <a key={link} className="social-link" href={link}
+                         target="_blank" rel="noopener noreferrer">{link}</a>
+                    ) : (
+                      <span key={link} className="social-link social-link-unsafe"
+                            title="Unsafe URL blocked">{link}</span>
+                    )
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -349,6 +482,82 @@ export default function App() {
           </div>
         </Modal>
       )}
+    </div>
+      </div>
+      <div className="right-panel">
+        <div className="chat-header">AI Assistant</div>
+        <div className="chat-messages">
+          {chatError && <div className="chat-error">{chatError}</div>}
+          {messages.length === 0 && !streaming && (
+            <div className="chat-empty">
+              Ask a question about clients, documents, or portfolio data.
+            </div>
+          )}
+          {messages.map((msg, i) => (
+            <div key={i} className={`chat-msg ${msg.role}`}>
+              <div className="chat-msg-avatar">{msg.role === "user" ? "U" : "AI"}</div>
+              <div className="chat-msg-body">
+                <div className="chat-msg-header">
+                  <span className="chat-msg-name">{msg.role === "user" ? "You" : "Assistant"}</span>
+                </div>
+                <div className="chat-msg-text">
+                  {msg.content || (streaming && i === messages.length - 1 ? <span className="typing-cursor" /> : null)}
+                </div>
+                {msg.sources && msg.sources.length > 0 && (
+                  <div className="chat-sources">
+                    Sources:{" "}
+                    {msg.sources.map((s) => (
+                      <span
+                        key={s.num}
+                        className="chat-source-chip"
+                        onClick={() => {
+                          if (s.type === "document") toggleDoc(s.id);
+                        }}
+                        title={s.type === "document" ? "View full document" : "Client: " + s.title}
+                      >
+                        [{s.num}] {s.title}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {msg.sources && msg.sources.some((s) => s.type === "document" && expandedDocs[s.id]) && (
+                  <div>
+                    {msg.sources.filter((s) => s.type === "document" && expandedDocs[s.id]).map((s) => (
+                      <div key={s.id} className="doc-content">
+                        {expandedDocs[s.id]?.content}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          <div ref={chatEndRef} />
+        </div>
+        <div className="chat-input-row">
+          <textarea
+            className="chat-input"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage();
+              }
+            }}
+            placeholder="Ask a question…"
+            rows={2}
+            disabled={streaming}
+          />
+          <button
+            className="chat-send-btn"
+            onClick={handleSendMessage}
+            disabled={streaming || !chatInput.trim()}
+          >
+            {streaming ? "…" : "Send"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

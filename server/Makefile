@@ -1,4 +1,4 @@
-.PHONY: install test cov lint format typecheck db-up db-down seed
+.PHONY: install test cov lint format typecheck up down seed seed-docs logs
 
 install:
 	pip install -e ".[dev]"
@@ -18,16 +18,17 @@ format:
 typecheck:
 	mypy app
 
-db-up:
-	docker compose up -d db
+up:
+	docker-compose up -d
 
-db-down:
-	docker compose down
+down:
+	docker-compose down
 
 seed:
 	python scripts/seed_fixtures.py
 
-dev:
-	docker compose up -d db && \
-	sleep 3 && \
-	uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+seed-docs:
+	python scripts/seed_documents.py
+
+logs:
+	docker-compose logs -f

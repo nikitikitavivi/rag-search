@@ -14,7 +14,7 @@ def create_app() -> FastAPI:
         version="1.0.0",
         description=(
             "WealthTech search API across clients and documents. "
-            "v1: client full-text search, document CRUD + embedding, LLM summaries."
+            "v1: client full-text search, document CRUD + embedding."
         ),
     )
 

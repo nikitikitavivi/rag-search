@@ -35,7 +35,7 @@ services:
       db:
         condition: service_healthy
     command: >
-      sh -c "alembic upgrade head &&
+      sh -c "alembic upgrade head 2>/dev/null || (alembic stamp base 2>/dev/null && alembic upgrade head) || true;
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   frontend:

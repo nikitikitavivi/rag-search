@@ -88,6 +88,11 @@ async def _setup_db() -> AsyncIterator[None]:
         await conn.execute(text("ALTER TABLE document_chunks DROP COLUMN IF EXISTS search_doc"))
         await conn.execute(
             text(
+                "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS metadata JSONB"
+            )
+        )
+        await conn.execute(
+            text(
                 """
                 ALTER TABLE document_chunks ADD COLUMN search_doc tsvector
                 GENERATED ALWAYS AS (to_tsvector('simple', coalesce(search_text, ''))) STORED
@@ -136,16 +141,16 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
     # Patch the service factories where they're *imported* (in the route modules),
     # not just where they're defined — `from app.services.llm import get_llm_service`
     # binds a local reference that won't see a patch on the source module.
-    import app.api.v1.documents as doc_mod
+    import app.services.documents as doc_svc_mod
 
     fake_emb = _fake_embedding_service()
 
-    original_get_emb = doc_mod.get_embedding_service
-    doc_mod.get_embedding_service = lambda: fake_emb
+    original_get_emb = doc_svc_mod.get_embedding_service
+    doc_svc_mod.get_embedding_service = lambda: fake_emb
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
     app.dependency_overrides.clear()
-    doc_mod.get_embedding_service = original_get_emb
+    doc_svc_mod.get_embedding_service = original_get_emb

@@ -114,9 +114,103 @@ export async function createDocument(
   return resp.json();
 }
 
+export async function getDocument(id: string): Promise<DocumentItem> {
+  const resp = await fetch(`${API_BASE}/v1/documents/${id}`);
+  if (!resp.ok) return handleError(resp);
+  return resp.json();
+}
+
 export async function search(q: string, limit: number = 20): Promise<SearchResult[]> {
   const params = new URLSearchParams({ q, limit: String(limit) });
   const resp = await fetch(`${API_BASE}/v1/search?${params}`);
   if (!resp.ok) return handleError(resp);
   return resp.json();
+}
+
+export interface ChatSource {
+  num: number;
+  type: "client" | "document";
+  id: string;
+  title: string;
+  score: number;
+  chunk_id?: string;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  sources?: ChatSource[];
+}
+
+export function streamChat(
+  question: string,
+  onToken: (token: string) => void,
+  onSources: (sources: ChatSource[]) => void,
+  onContent: (content: string) => void,
+  onError: (error: string) => void,
+): AbortController {
+  const controller = new AbortController();
+
+  (async () => {
+    let fullContent = "";
+    try {
+      const resp = await fetch(`${API_BASE}/v1/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+        signal: controller.signal,
+      });
+
+      if (!resp.ok) {
+        onError(`HTTP ${resp.status}`);
+        return;
+      }
+
+      const reader = resp.body?.getReader();
+      if (!reader) {
+        onError("No response body");
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === "token") {
+              fullContent += event.content;
+              onToken(event.content);
+            } else if (event.type === "sources") {
+              onSources(event.content);
+            } else if (event.type === "error") {
+              onError(event.content);
+              return;
+            } else if (event.type === "done") {
+              onContent(fullContent);
+              return;
+            }
+          } catch {
+            // skip malformed events
+          }
+        }
+      }
+      onContent(fullContent);
+    } catch (e: any) {
+      if (e.name !== "AbortError") {
+        onError(e.message || "Chat request failed");
+      }
+    }
+  })();
+
+  return controller;
 }

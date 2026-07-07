@@ -41,6 +41,23 @@ class LLMService:
         )
         return resp.choices[0].message.content or ""
 
+    def stream_chat(
+        self, system: str, user: str, max_tokens: int = 500
+    ) -> Any:
+        if not self.is_available:
+            raise RuntimeError("OpenAI API key is not configured")
+        client = self._get_client()
+        return client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=max_tokens,
+            temperature=0.2,
+            stream=True,
+        )
+
     def summarize(self, content: str) -> str:
         if not self.is_available:
             raise RuntimeError("OpenAI API key is not configured")

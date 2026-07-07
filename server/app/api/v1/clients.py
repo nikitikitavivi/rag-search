@@ -2,16 +2,13 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import conflict, not_found
-from app.core.cursor import decode_cursor, encode_cursor
 from app.core.deps import get_db
-from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientOut, ClientPage
 from app.schemas.common import ErrorResponse
+from app.services.clients import ClientService, DuplicateEmailError
 
 SessionDep = Annotated[AsyncSession, Depends(get_db)]
 
@@ -34,26 +31,17 @@ MAX_PAGE_SIZE = 100
     responses=COMMON_ERRORS,
     summary="Create a client",
 )
-async def create_client(payload: ClientCreate, db: SessionDep) -> Client:
-    client = Client(
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        email=payload.email,
-        description=payload.description,
-        social_links=payload.social_links,
-    )
-    db.add(client)
+async def create_client(payload: ClientCreate, db: SessionDep) -> ClientOut:
+    svc = ClientService(db)
     try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
+        client = await svc.create(payload)
+    except DuplicateEmailError:
         raise conflict(
             "CLIENT_EMAIL_CONFLICT",
             "A client with this email already exists",
             resource_id=payload.email,
-        ) from exc
-    await db.refresh(client)
-    return client
+        )
+    return ClientOut.model_validate(client)
 
 
 @router.get(
@@ -67,29 +55,8 @@ async def list_clients(
     limit: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Page size"),
     cursor: str | None = Query(None, description="Opaque cursor from the previous page"),
 ) -> ClientPage:
-    stmt = select(Client).order_by(Client.created_at.desc(), Client.id.desc())
-
-    if cursor:
-        cursor_ts, cursor_id = decode_cursor(cursor)
-        # Keyset: rows strictly before (created_at, id) in DESC order
-        stmt = stmt.where(
-            (Client.created_at < cursor_ts)
-            | ((Client.created_at == cursor_ts) & (Client.id < cursor_id))
-        )
-
-    # Fetch limit+1 to determine has_more without a separate count query
-    stmt = stmt.limit(limit + 1)
-    result = await db.execute(stmt)
-    rows = list(result.scalars().all())
-
-    has_more = len(rows) > limit
-    items = rows[:limit]
-
-    next_cursor = None
-    if has_more and items:
-        last = items[-1]
-        next_cursor = encode_cursor(last.created_at, str(last.id))
-
+    svc = ClientService(db)
+    items, next_cursor, has_more = await svc.list(limit, cursor)
     return ClientPage(
         items=[ClientOut.model_validate(c) for c in items],
         next_cursor=next_cursor,
@@ -107,12 +74,12 @@ async def list_clients(
 async def lookup_client(
     db: SessionDep,
     email: str = Query(..., description="Client email"),
-) -> Client:
-    result = await db.execute(select(Client).where(Client.email == email))
-    client = result.scalar_one_or_none()
+) -> ClientOut:
+    svc = ClientService(db)
+    client = await svc.get_by_email(email)
     if client is None:
         raise not_found("CLIENT_NOT_FOUND", "Client not found", resource_id=email)
-    return client
+    return ClientOut.model_validate(client)
 
 
 @router.get(
@@ -121,12 +88,12 @@ async def lookup_client(
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Get a client by id",
 )
-async def get_client(client_id: UUID, db: SessionDep) -> Client:
-    result = await db.execute(select(Client).where(Client.id == client_id))
-    client = result.scalar_one_or_none()
+async def get_client(client_id: UUID, db: SessionDep) -> ClientOut:
+    svc = ClientService(db)
+    client = await svc.get_by_id(client_id)
     if client is None:
         raise not_found("CLIENT_NOT_FOUND", "Client not found", resource_id=str(client_id))
-    return client
+    return ClientOut.model_validate(client)
 
 
 @router.get(
@@ -137,9 +104,5 @@ async def get_client(client_id: UUID, db: SessionDep) -> Client:
     include_in_schema=False,
 )
 async def count_client_documents(client_id: UUID, db: SessionDep) -> int:
-    from app.models.document import Document
-
-    result = await db.execute(
-        select(func.count()).select_from(Document).where(Document.client_id == client_id)
-    )
-    return int(result.scalar_one())
+    svc = ClientService(db)
+    return await svc.count_documents(client_id)

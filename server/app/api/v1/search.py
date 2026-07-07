@@ -43,15 +43,13 @@ async def search(
     client_rows = await service.search_clients(q, limit=limit)
     doc_rows = await service.search_documents_rrf(q, limit=limit)
 
-    max_client_score = max((float(r["score"]) for r in client_rows), default=1.0)
-
     results: list[SearchResult] = []
 
     for row in client_rows:
         results.append(
             ClientResult(
                 type="client",
-                score=float(row["score"]) / max_client_score,
+                score=row["score"],
                 client=SearchHitClient(
                     id=row["id"],
                     first_name=row["first_name"],

@@ -184,3 +184,4 @@ rag-search/
 ```bash
 cd server && python -m pytest tests/ -v
 ```
+# rag-search

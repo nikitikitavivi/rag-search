@@ -13,11 +13,13 @@ from app.schemas.search import (
     SearchHitDocument,
     SearchResult,
 )
+from app.services.embeddings import EmbeddingService, get_embedding_service
 from app.services.search import SearchService
 
 router = APIRouter(prefix="/search", tags=["search"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+EmbeddingDep = Annotated[EmbeddingService, Depends(get_embedding_service)]
 
 SEARCH_ERRORS: dict[int | str, dict[str, Any]] = {
     400: {"model": ErrorResponse},
@@ -33,19 +35,20 @@ SEARCH_ERRORS: dict[int | str, dict[str, Any]] = {
 )
 async def search(
     db: SessionDep,
+    emb: EmbeddingDep,
     q: str = Query(..., description="Search query (supports quotes, OR, -exclude)"),
     limit: int = Query(20, ge=1, le=100),
-    type: Literal["clients", "documents"] | None = Query(
-        None, description="Filter by result type; omit for both"
+    result_type: Literal["clients", "documents"] | None = Query(
+        None, alias="type", description="Filter by result type; omit for both"
     ),
 ) -> list[SearchResult]:
     if not q or not q.strip():
         raise bad_request("EMPTY_QUERY", "Query must not be empty")
-    service = SearchService(db)
+    service = SearchService(db, emb)
 
     results: list[SearchResult] = []
 
-    if type != "documents":
+    if result_type != "documents":
         client_rows = await service.search_clients(q, limit=limit)
         for row in client_rows:
             results.append(
@@ -64,7 +67,7 @@ async def search(
                 )
             )
 
-    if type != "clients":
+    if result_type != "clients":
         doc_rows = await service.search_documents_rrf(q, limit=limit)
         for row in doc_rows:
             results.append(

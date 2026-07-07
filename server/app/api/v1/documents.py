@@ -4,7 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.errors import not_found
+from app.api.errors import bad_request, not_found
+from app.core.cursor import InvalidCursorError
 from app.core.db import get_session
 from app.schemas.common import ErrorResponse
 from app.schemas.document import (
@@ -14,6 +15,8 @@ from app.schemas.document import (
     DocumentPage,
 )
 from app.services.documents import ClientNotFoundError, DocumentService
+from app.services.embeddings import EmbeddingService, get_embedding_service
+from app.services.llm import LLMService, get_llm_service
 
 router = APIRouter(tags=["documents"])
 
@@ -21,6 +24,8 @@ DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+EmbeddingDep = Annotated[EmbeddingService, Depends(get_embedding_service)]
+LLMDep = Annotated[LLMService, Depends(get_llm_service)]
 
 DOC_ERRORS: dict[int | str, dict[str, Any]] = {
     404: {"model": ErrorResponse},
@@ -41,8 +46,10 @@ async def create_document(
     client_id: UUID,
     payload: DocumentCreate,
     db: SessionDep,
+    emb: EmbeddingDep,
+    llm: LLMDep,
 ) -> DocumentOut:
-    svc = DocumentService(db)
+    svc = DocumentService(db, emb, llm)
     try:
         document = await svc.create(client_id, payload)
     except ClientNotFoundError as err:
@@ -58,11 +65,16 @@ async def create_document(
 )
 async def list_documents(
     db: SessionDep,
+    emb: EmbeddingDep,
+    llm: LLMDep,
     limit: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Page size"),
     cursor: str | None = Query(None, description="Opaque cursor from the previous page"),
 ) -> DocumentPage:
-    svc = DocumentService(db)
-    rows, next_cursor, has_more = await svc.list(limit, cursor)
+    svc = DocumentService(db, emb, llm)
+    try:
+        rows, next_cursor, has_more = await svc.list(limit, cursor)
+    except InvalidCursorError as err:
+        raise bad_request("INVALID_CURSOR", str(err)) from err
 
     items = [
         DocumentListItem(
@@ -90,8 +102,13 @@ async def list_documents(
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Get a document by id",
 )
-async def get_document(document_id: UUID, db: SessionDep) -> DocumentOut:
-    svc = DocumentService(db)
+async def get_document(
+    document_id: UUID,
+    db: SessionDep,
+    emb: EmbeddingDep,
+    llm: LLMDep,
+) -> DocumentOut:
+    svc = DocumentService(db, emb, llm)
     document = await svc.get_by_id(document_id)
     if document is None:
         raise not_found("DOCUMENT_NOT_FOUND", "Document not found", resource_id=str(document_id))

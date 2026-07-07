@@ -132,3 +132,23 @@ async def test_search_phrase_query(client):
     assert resp.status_code == 200
     body = resp.json()
     assert len(body) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_documents_by_text(client):
+    """FTS on document chunks returns matching documents."""
+    resp = await client.post("/v1/clients", json=CLIENT_PAYLOAD)
+    cid = resp.json()["id"]
+    await client.post(
+        f"/v1/clients/{cid}/documents",
+        json={
+            "title": "Residential Statement",
+            "content": "Monthly electricity and water service confirmation.",
+        },
+    )
+    resp = await client.get("/v1/search?q=electricity&type=documents")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) >= 1
+    assert body[0]["type"] == "document"
+    assert body[0]["document"]["title"] == "Residential Statement"

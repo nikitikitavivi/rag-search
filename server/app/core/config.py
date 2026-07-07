@@ -1,8 +1,13 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_env_file = ".env" if os.path.isfile(".env") else None
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
 
     database_url: str = "postgresql+asyncpg://ragsearch:ragsearch@localhost:5433/ragsearch"
     openai_api_key: str = ""

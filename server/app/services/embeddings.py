@@ -48,17 +48,31 @@ class EmbeddingService:
 
         return await asyncio.to_thread(_run)
 
+    async def embed_batch(self, texts: list[str]) -> list[np.ndarray]:
+        if not self.is_available:
+            raise RuntimeError("OpenAI embeddings API key is not configured")
 
-_service: EmbeddingService | None = None
+        def _run() -> list[np.ndarray]:
+            client = self._get_client()
+            resp = client.embeddings.create(
+                model=self._model_name,
+                input=texts,
+            )
+            return [np.asarray(d.embedding, dtype=np.float32) for d in resp.data]
+
+        return await asyncio.to_thread(_run)
+
+
+_embedding_service: EmbeddingService | None = None
 
 
 def get_embedding_service() -> EmbeddingService:
-    global _service
-    if _service is None:
-        _service = EmbeddingService()
-    return _service
+    global _embedding_service
+    if _embedding_service is None:
+        _embedding_service = EmbeddingService()
+    return _embedding_service
 
 
 def reset_embedding_service() -> None:
-    global _service
-    _service = None
+    global _embedding_service
+    _embedding_service = None

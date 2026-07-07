@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from app.core.config import settings
@@ -12,6 +13,7 @@ class LLMService:
         self._api_key = api_key if api_key is not None else settings.openai_api_key
         self._model = model or settings.openai_model
         self._client: Any | None = None
+        self._async_client: Any | None = None
 
     @property
     def model_name(self) -> str:
@@ -28,6 +30,14 @@ class LLMService:
 
         self._client = OpenAI(api_key=self._api_key)
         return self._client
+
+    def _get_async_client(self) -> Any:
+        if self._async_client is not None:
+            return self._async_client
+        from openai import AsyncOpenAI
+
+        self._async_client = AsyncOpenAI(api_key=self._api_key)
+        return self._async_client
 
     async def _call(self, system: str, user: str, max_tokens: int = 300) -> str:
         def _run() -> str:
@@ -47,42 +57,25 @@ class LLMService:
 
     async def stream_chat(
         self, system: str, user: str, max_tokens: int = 500
-    ) -> Any:
+    ) -> AsyncIterator[str]:
         if not self.is_available:
             raise RuntimeError("OpenAI API key is not configured")
 
-        queue: asyncio.Queue[tuple[bool, str]] = asyncio.Queue()
-
-        def _run() -> None:
-            try:
-                client = self._get_client()
-                stream = client.chat.completions.create(
-                    model=self._model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    max_tokens=max_tokens,
-                    temperature=0.2,
-                    stream=True,
-                )
-                for chunk in stream:
-                    delta = chunk.choices[0].delta.content
-                    if delta:
-                        queue.put_nowait((False, delta))
-                queue.put_nowait((True, ""))
-            except Exception as exc:
-                queue.put_nowait((True, str(exc)))
-
-        asyncio.ensure_future(asyncio.to_thread(_run))
-
-        while True:
-            done, payload = await queue.get()
-            if done:
-                if payload:
-                    raise RuntimeError(payload)
-                return
-            yield payload
+        client = self._get_async_client()
+        stream = await client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=max_tokens,
+            temperature=0.2,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
 
     async def summarize(self, content: str) -> str:
         if not self.is_available:

@@ -6,17 +6,19 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.embeddings import get_embedding_service
+from app.services.embeddings import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
 RRF_K = 60
 MIN_SCORE = 0.005
+VECTOR_SIMILARITY_THRESHOLD = 0.35
 
 
 class SearchService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, emb_service: EmbeddingService) -> None:
         self._session = session
+        self._emb = emb_service
 
     async def search_clients(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         q = query.strip()
@@ -45,11 +47,10 @@ class SearchService:
         if not q:
             return []
 
-        emb = get_embedding_service()
         vector_hits: list[tuple[str, float]] = []
-        if emb.is_available:
+        if self._emb.is_available:
             try:
-                q_vec = await emb.embed(query)
+                q_vec = await self._emb.embed(q)
                 vec_str = "[" + ",".join(str(float(v)) for v in q_vec) + "]"
                 stmt = text(
                     "SELECT dc.id, "
@@ -64,9 +65,11 @@ class SearchService:
                     {"vec": vec_str, "limit": limit * 2},
                 )
                 for row in vec_result.mappings():
-                    vector_hits.append((row["id"], float(row["similarity"])))
-            except Exception as exc:
-                logger.warning("Vector search failed: %s", exc)
+                    sim = float(row["similarity"])
+                    if sim >= VECTOR_SIMILARITY_THRESHOLD:
+                        vector_hits.append((row["id"], sim))
+            except Exception:
+                logger.warning("Vector search failed", exc_info=True)
 
         q_clean = re.sub(r"[@.]", " ", q)
         bm25_hits: list[tuple[str, float]] = []
@@ -84,8 +87,8 @@ class SearchService:
             )
             for row in bm25_result.mappings():
                 bm25_hits.append((row["id"], float(row["score"])))
-        except Exception as exc:
-            logger.warning("BM25 search failed: %s", exc)
+        except Exception:
+            logger.warning("BM25 search failed", exc_info=True)
 
         rrf_scores: dict[str, float] = {}
         for rank, (chunk_id, _) in enumerate(vector_hits, start=1):
@@ -127,4 +130,3 @@ class SearchService:
         rows.sort(key=lambda r: rank_map[str(r["id"])])
         rows = [r for r in rows if r["score"] >= MIN_SCORE]
         return rows
-

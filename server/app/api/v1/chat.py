@@ -1,20 +1,23 @@
-import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.db import SessionLocal
-from app.services.llm import get_llm_service
-from app.services.search import MIN_SCORE, SearchService
+from app.services.embeddings import EmbeddingService, get_embedding_service
+from app.services.llm import LLMService, get_llm_service
+from app.services.search import SearchService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+EmbeddingDep = Annotated[EmbeddingService, Depends(get_embedding_service)]
+LLMDep = Annotated[LLMService, Depends(get_llm_service)]
 
 SYSTEM_PROMPT = (
     "You are a WealthTech assistant for financial advisors. "
@@ -48,7 +51,7 @@ def _build_context(
             name = f"{hit.get('first_name', '')} {hit.get('last_name', '')}".strip()
             desc = hit.get("description") or ""
             email = hit.get("email", "")
-            parts.append(f"[{idx}] {name} <{email}> — {desc}")
+            parts.append(f"[{idx}] {name} <{email}> - {desc}")
 
     if doc_hits:
         parts.append("\nDOCUMENTS:")
@@ -93,29 +96,25 @@ def _build_sources(
 
 
 @router.post("", summary="Chat with RAG context (SSE streaming)")
-async def chat(payload: ChatRequest) -> StreamingResponse:
+async def chat(payload: ChatRequest, emb: EmbeddingDep, llm: LLMDep) -> StreamingResponse:
     question = payload.question.strip()
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        llm = get_llm_service()
         if not llm.is_available:
             yield _sse_event("error", "LLM API key is not configured")
             return
 
         async with SessionLocal() as session:
-            svc = SearchService(session)
+            svc = SearchService(session, emb)
 
             try:
-                client_hits, doc_hits = await asyncio.gather(
-                    svc.search_clients(question, limit=3),
-                    svc.search_documents_rrf(question, limit=20),
-                )
-            except Exception as exc:
+                client_hits = await svc.search_clients(question, limit=3)
+                doc_hits = await svc.search_documents_rrf(question, limit=20)
+            except Exception:
                 logger.exception("Search failed during chat")
-                yield _sse_event("error", f"Search failed: {exc}")
+                yield _sse_event("error", "Search failed during chat")
                 return
 
-            doc_hits = [h for h in doc_hits if h["score"] >= MIN_SCORE]
             doc_hits = doc_hits[:5]
 
             sources = _build_sources(client_hits, doc_hits)
@@ -135,9 +134,9 @@ async def chat(payload: ChatRequest) -> StreamingResponse:
         try:
             async for token in llm.stream_chat(SYSTEM_PROMPT, user_prompt, max_tokens=500):
                 yield _sse_event("token", token)
-        except Exception as exc:
+        except Exception:
             logger.exception("LLM streaming failed")
-            yield _sse_event("error", f"LLM streaming failed: {exc}")
+            yield _sse_event("error", "LLM streaming failed")
             return
 
         yield _sse_event("done", "")

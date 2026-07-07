@@ -14,7 +14,7 @@ from app.models.client import Client
 from app.models.document import Document
 from app.schemas.client import ClientCreate
 from app.schemas.document import DocumentCreate
-from app.services.clients import ClientService, DuplicateEmailError
+from app.services.clients import ClientService
 from app.services.documents import DocumentService
 from app.services.embeddings import get_embedding_service
 from app.services.llm import get_llm_service
@@ -159,19 +159,24 @@ async def _seed_clients() -> None:
             logger.info("Client fixtures already seeded (%d), skipping.", existing)
             return
 
-    clients = _generate_clients(120)
-    logger.info("Seeding client fixtures: %d clients...", len(clients))
-    created = 0
-    conflicts = 0
-    for data in clients:
-        async with SessionLocal() as session:
-            svc = ClientService(session)
-            try:
-                await svc.create(ClientCreate(**data))
-                created += 1
-            except DuplicateEmailError:
-                conflicts += 1
-    logger.info("Client fixtures seeded: %d created, %d conflicts.", created, conflicts)
+    clients_data = _generate_clients(40)
+    logger.info("Seeding client fixtures: %d clients...", len(clients_data))
+    clients = [Client(
+        first_name=d["first_name"],
+        last_name=d["last_name"],
+        email=d["email"],
+        description=d["description"],
+        social_links=d["social_links"],
+    ) for d in clients_data]
+
+    async with SessionLocal() as session:
+        session.add_all(clients)
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+    logger.info("Client fixtures seeded: %d clients.", len(clients_data))
 
 
 _SEED_DOCS = [

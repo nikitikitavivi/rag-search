@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -21,9 +21,9 @@ def _available_emb(query_vec=None):
     svc.is_available = True
     svc.dim = 1536
     if query_vec is not None:
-        svc.embed.return_value = query_vec
+        svc.embed = AsyncMock(return_value=query_vec)
     else:
-        svc.embed.return_value = np.ones(1536, dtype=np.float32)
+        svc.embed = AsyncMock(return_value=np.ones(1536, dtype=np.float32))
     return svc
 
 
@@ -190,7 +190,7 @@ async def test_search_documents_rrf_vector_failure_continues_with_bm25(db_sessio
 
     mock_emb = MagicMock()
     mock_emb.is_available = True
-    mock_emb.embed.side_effect = RuntimeError("API error")
+    mock_emb.embed = AsyncMock(side_effect=RuntimeError("API error"))
 
     with patch(
         "app.services.search.get_embedding_service",

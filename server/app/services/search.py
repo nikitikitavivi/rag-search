@@ -1,5 +1,6 @@
 import logging
 import re
+import uuid
 from typing import Any
 
 from sqlalchemy import text
@@ -10,8 +11,7 @@ from app.services.embeddings import get_embedding_service
 logger = logging.getLogger(__name__)
 
 RRF_K = 60
-BM25_WEIGHT = 0.5
-MIN_SCORE = 0.1
+MIN_SCORE = 0.005
 
 
 class SearchService:
@@ -49,7 +49,7 @@ class SearchService:
         vector_hits: list[tuple[str, float]] = []
         if emb.is_available:
             try:
-                q_vec = emb.embed(query)
+                q_vec = await emb.embed(query)
                 vec_str = "[" + ",".join(str(float(v)) for v in q_vec) + "]"
                 stmt = text(
                     "SELECT dc.id, "
@@ -87,44 +87,18 @@ class SearchService:
         except Exception as exc:
             logger.warning("BM25 search failed: %s", exc)
 
-        vector_scores: dict[str, float] = {}
-        for chunk_id, sim in vector_hits:
-            vector_scores[str(chunk_id)] = sim
+        rrf_scores: dict[str, float] = {}
+        for rank, (chunk_id, _) in enumerate(vector_hits, start=1):
+            rrf_scores[str(chunk_id)] = rrf_scores.get(str(chunk_id), 0.0) + 1.0 / (RRF_K + rank)
+        for rank, (chunk_id, _) in enumerate(bm25_hits, start=1):
+            rrf_scores[str(chunk_id)] = rrf_scores.get(str(chunk_id), 0.0) + 1.0 / (RRF_K + rank)
 
-        bm25_scores: dict[str, float] = {}
-        max_bm25 = 0.0
-        for chunk_id, score in bm25_hits:
-            bm25_scores[str(chunk_id)] = score
-            if score > max_bm25:
-                max_bm25 = score
-
-        all_ids = set(vector_scores.keys()) | set(bm25_scores.keys())
-        use_bm25 = len(bm25_scores) > 0
-        use_vec = len(vector_scores) > 0
-
-        if use_bm25 and use_vec:
-            w = BM25_WEIGHT
-        elif use_bm25:
-            w = 1.0
-        else:
-            w = 0.0
-
-        fused_scores: dict[str, float] = {}
-        for chunk_id in all_ids:
-            vec = vector_scores.get(chunk_id, 0.0)
-            bm = bm25_scores.get(chunk_id, 0.0) / max_bm25 if max_bm25 > 0 else 0.0
-            fused_scores[chunk_id] = w * bm + (1 - w) * vec
-
-        sorted_ids = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+        sorted_ids = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
         if not sorted_ids:
             return []
 
         rank_map = {chunk_id: i for i, (chunk_id, _) in enumerate(sorted_ids)}
-
-        placeholders = ", ".join(f":id_{i}" for i in range(len(sorted_ids)))
-        params: dict[str, Any] = {}
-        for i, (chunk_id, _) in enumerate(sorted_ids):
-            params[f"id_{i}"] = chunk_id
+        id_list = [uuid.UUID(chunk_id) for chunk_id, _ in sorted_ids]
 
         docs_result = await self._session.execute(
             text(
@@ -132,9 +106,9 @@ class SearchService:
                 "d.title, d.client_id "
                 "FROM document_chunks dc "
                 "JOIN documents d ON d.id = dc.document_id "
-                f"WHERE dc.id::text IN ({placeholders})"
+                "WHERE dc.id = ANY(:ids)"
             ),
-            params,
+            {"ids": id_list},
         )
         rows = []
         for row in docs_result.mappings():
@@ -147,7 +121,7 @@ class SearchService:
                     "title": row["title"],
                     "chunk_index": row["chunk_index"],
                     "content": row["content"],
-                    "score": fused_scores[chunk_id],
+                    "score": rrf_scores[chunk_id],
                 }
             )
         rows.sort(key=lambda r: rank_map[str(r["id"])])

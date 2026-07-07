@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 
@@ -30,18 +31,22 @@ class EmbeddingService:
         self._client = OpenAI(api_key=self._api_key)
         return self._client
 
-    def embed(self, text: str) -> np.ndarray:
+    async def embed(self, text: str) -> np.ndarray:
         if not self.is_available:
             raise RuntimeError("OpenAI embeddings API key is not configured")
         if not text or not text.strip():
             raise ValueError("Cannot embed empty text")
-        client = self._get_client()
-        resp = client.embeddings.create(
-            model=self._model_name,
-            input=text,
-        )
-        vec = resp.data[0].embedding
-        return np.asarray(vec, dtype=np.float32)
+
+        def _run() -> np.ndarray:
+            client = self._get_client()
+            resp = client.embeddings.create(
+                model=self._model_name,
+                input=text,
+            )
+            vec = resp.data[0].embedding
+            return np.asarray(vec, dtype=np.float32)
+
+        return await asyncio.to_thread(_run)
 
 
 _service: EmbeddingService | None = None

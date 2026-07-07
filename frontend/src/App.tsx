@@ -194,14 +194,14 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const results = await search(q, 50);
+      const results = await search(q, tab, 50);
       setSearchResults(results);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Search failed");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tab]);
 
   const onSearchChange = (value: string) => {
     setSearchQuery(value);
@@ -297,7 +297,7 @@ export default function App() {
       <div className="left-panel">
     <div className="container">
       <h1>RAG Search — WealthTech</h1>
-      <p className="subtitle">Hybrid search across clients &amp; documents · RRF-fused retrieval</p>
+      <p className="subtitle">Search across clients or documents · RRF-fused retrieval</p>
 
       {error && <div className="error-msg">{error}</div>}
 

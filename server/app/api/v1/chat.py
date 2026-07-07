@@ -1,22 +1,20 @@
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db
+from app.core.db import SessionLocal
 from app.services.llm import get_llm_service
 from app.services.search import MIN_SCORE, SearchService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-SessionDep = Annotated[AsyncSession, Depends(get_db)]
 
 SYSTEM_PROMPT = (
     "You are a WealthTech assistant for financial advisors. "
@@ -95,7 +93,7 @@ def _build_sources(
 
 
 @router.post("", summary="Chat with RAG context (SSE streaming)")
-async def chat(payload: ChatRequest, db: SessionDep) -> StreamingResponse:
+async def chat(payload: ChatRequest) -> StreamingResponse:
     question = payload.question.strip()
 
     async def event_stream() -> AsyncGenerator[str, None]:
@@ -104,39 +102,39 @@ async def chat(payload: ChatRequest, db: SessionDep) -> StreamingResponse:
             yield _sse_event("error", "LLM API key is not configured")
             return
 
-        svc = SearchService(db)
+        async with SessionLocal() as session:
+            svc = SearchService(session)
+
+            try:
+                client_hits, doc_hits = await asyncio.gather(
+                    svc.search_clients(question, limit=3),
+                    svc.search_documents_rrf(question, limit=20),
+                )
+            except Exception as exc:
+                logger.exception("Search failed during chat")
+                yield _sse_event("error", f"Search failed: {exc}")
+                return
+
+            doc_hits = [h for h in doc_hits if h["score"] >= MIN_SCORE]
+            doc_hits = doc_hits[:5]
+
+            sources = _build_sources(client_hits, doc_hits)
+            yield _sse_event("sources", sources)
+
+            if not client_hits and not doc_hits:
+                yield _sse_event(
+                    "token",
+                    "I could not find any relevant information to answer that question.",
+                )
+                yield _sse_event("done", "")
+                return
+
+            context = _build_context(client_hits, doc_hits)
+            user_prompt = f"User question: {question}\n\nContext:\n{context}"
 
         try:
-            client_hits = await svc.search_clients(question, limit=3)
-            doc_hits = await svc.search_documents_rrf(question, limit=20)
-        except Exception as exc:
-            logger.exception("Search failed during chat")
-            yield _sse_event("error", f"Search failed: {exc}")
-            return
-
-        doc_hits = [h for h in doc_hits if h["score"] >= MIN_SCORE]
-        doc_hits = doc_hits[:5]
-
-        sources = _build_sources(client_hits, doc_hits)
-        yield _sse_event("sources", sources)
-
-        if not client_hits and not doc_hits:
-            yield _sse_event(
-                "token",
-                "I could not find any relevant information to answer that question.",
-            )
-            yield _sse_event("done", "")
-            return
-
-        context = _build_context(client_hits, doc_hits)
-        user_prompt = f"User question: {question}\n\nContext:\n{context}"
-
-        try:
-            stream = llm.stream_chat(SYSTEM_PROMPT, user_prompt, max_tokens=500)
-            for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    yield _sse_event("token", delta)
+            async for token in llm.stream_chat(SYSTEM_PROMPT, user_prompt, max_tokens=500):
+                yield _sse_event("token", token)
         except Exception as exc:
             logger.exception("LLM streaming failed")
             yield _sse_event("error", f"LLM streaming failed: {exc}")

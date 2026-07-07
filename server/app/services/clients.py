@@ -29,9 +29,17 @@ class ClientService:
         self._session.add(client)
         try:
             await self._session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             await self._session.rollback()
-            raise DuplicateEmailError(f"Client with email {payload.email} already exists")
+            if (
+                exc.orig
+                and hasattr(exc.orig, "diag")
+                and exc.orig.diag.constraint_name == "clients_email_key"
+            ):
+                raise DuplicateEmailError(
+                    f"Client with email {payload.email} already exists"
+                ) from exc
+            raise
         await self._session.refresh(client)
         return client
 

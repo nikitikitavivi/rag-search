@@ -23,22 +23,22 @@ class TestEmbeddingService:
         svc = EmbeddingService(api_key="")
         assert svc.is_available is False
 
-    def test_embed_raises_when_not_available(self):
+    async def test_embed_raises_when_not_available(self):
         svc = EmbeddingService(api_key="")
         with pytest.raises(RuntimeError, match="OpenAI embeddings API key is not configured"):
-            svc.embed("some text")
+            await svc.embed("some text")
 
-    def test_embed_raises_on_empty_text(self):
+    async def test_embed_raises_on_empty_text(self):
         svc = EmbeddingService(api_key="sk-test")
         with pytest.raises(ValueError, match="Cannot embed empty text"):
-            svc.embed("")
+            await svc.embed("")
 
-    def test_embed_raises_on_whitespace_text(self):
+    async def test_embed_raises_on_whitespace_text(self):
         svc = EmbeddingService(api_key="sk-test")
         with pytest.raises(ValueError, match="Cannot embed empty text"):
-            svc.embed("   ")
+            await svc.embed("   ")
 
-    def test_embed_returns_correct_dimensions(self):
+    async def test_embed_returns_correct_dimensions(self):
         svc = EmbeddingService(api_key="sk-test", model="text-embedding-3-small")
         fake_vec = [0.1] * 1536
 
@@ -48,7 +48,7 @@ class TestEmbeddingService:
         mock_client.embeddings.create.return_value.data = [mock_data]
 
         with patch.object(svc, "_get_client", return_value=mock_client):
-            result = svc.embed("test text")
+            result = await svc.embed("test text")
 
         assert isinstance(result, np.ndarray)
         assert result.shape == (1536,)
@@ -59,7 +59,7 @@ class TestEmbeddingService:
             input="test text",
         )
 
-    def test_embed_calls_api_with_correct_model(self):
+    async def test_embed_calls_api_with_correct_model(self):
         svc = EmbeddingService(api_key="sk-test", model="custom-model")
         fake_vec = [0.5] * 1536
 
@@ -69,7 +69,7 @@ class TestEmbeddingService:
         mock_client.embeddings.create.return_value.data = [mock_data]
 
         with patch.object(svc, "_get_client", return_value=mock_client):
-            svc.embed("hello world")
+            await svc.embed("hello world")
 
         mock_client.embeddings.create.assert_called_once_with(
             model="custom-model",

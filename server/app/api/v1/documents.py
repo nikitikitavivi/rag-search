@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import not_found
-from app.core.deps import get_db
+from app.core.db import get_session
 from app.schemas.common import ErrorResponse
 from app.schemas.document import (
     DocumentCreate,
@@ -20,7 +20,7 @@ router = APIRouter(tags=["documents"])
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
 
-SessionDep = Annotated[AsyncSession, Depends(get_db)]
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 DOC_ERRORS: dict[int | str, dict[str, Any]] = {
     404: {"model": ErrorResponse},
@@ -45,8 +45,8 @@ async def create_document(
     svc = DocumentService(db)
     try:
         document = await svc.create(client_id, payload)
-    except ClientNotFoundError:
-        raise not_found("CLIENT_NOT_FOUND", "Client not found", resource_id=str(client_id))
+    except ClientNotFoundError as err:
+        raise not_found("CLIENT_NOT_FOUND", "Client not found", resource_id=str(client_id)) from err
     return DocumentOut.model_validate(document)
 
 

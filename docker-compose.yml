@@ -28,14 +28,13 @@ services:
       OPENAI_MODEL: gpt-4.1-nano
       OPENAI_EMBEDDINGS_API_KEY: ${OPENAI_EMBEDDINGS_API_KEY:-}
       OPENAI_EMBEDDINGS_MODEL: text-embedding-3-small
-      RUN_MIGRATIONS: "1"
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
     command: >
-      sh -c "alembic upgrade head 2>/dev/null || (alembic stamp base 2>/dev/null && alembic upgrade head) || true;
+      sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   frontend:

@@ -18,22 +18,22 @@ class TestLLMService:
         svc = LLMService(model="custom-model")
         assert svc.model_name == "custom-model"
 
-    def test_summarize_raises_when_not_available(self):
+    async def test_summarize_raises_when_not_available(self):
         svc = LLMService(api_key="")
         with pytest.raises(RuntimeError, match="OpenAI API key is not configured"):
-            svc.summarize("some content")
+            await svc.summarize("some content")
 
-    def test_document_context_raises_when_not_available(self):
+    async def test_document_context_raises_when_not_available(self):
         svc = LLMService(api_key="")
         with pytest.raises(RuntimeError, match="OpenAI API key is not configured"):
-            svc.document_context("title", "content")
+            await svc.document_context("title", "content")
 
-    def test_hypothetical_questions_raises_when_not_available(self):
+    async def test_hypothetical_questions_raises_when_not_available(self):
         svc = LLMService(api_key="")
         with pytest.raises(RuntimeError, match="OpenAI API key is not configured"):
-            svc.hypothetical_questions("chunk text")
+            await svc.hypothetical_questions("chunk text")
 
-    def test_summarize_calls_api_and_returns_content(self):
+    async def test_summarize_calls_api_and_returns_content(self):
         svc = LLMService(api_key="sk-test", model="gpt-4.1-nano")
         mock_client = MagicMock()
         mock_choice = MagicMock()
@@ -41,7 +41,7 @@ class TestLLMService:
         mock_client.chat.completions.create.return_value.choices = [mock_choice]
 
         with patch.object(svc, "_get_client", return_value=mock_client):
-            result = svc.summarize("Document content here.")
+            result = await svc.summarize("Document content here.")
 
         assert result == "A concise summary."
         mock_client.chat.completions.create.assert_called_once()
@@ -50,7 +50,7 @@ class TestLLMService:
         assert call_kwargs["max_tokens"] == 300
         assert "WealthTech" in call_kwargs["messages"][1]["content"]
 
-    def test_document_context_calls_api_with_correct_params(self):
+    async def test_document_context_calls_api_with_correct_params(self):
         svc = LLMService(api_key="sk-test")
         mock_client = MagicMock()
         mock_choice = MagicMock()
@@ -58,14 +58,14 @@ class TestLLMService:
         mock_client.chat.completions.create.return_value.choices = [mock_choice]
 
         with patch.object(svc, "_get_client", return_value=mock_client):
-            result = svc.document_context("My Title", "Content here.")
+            result = await svc.document_context("My Title", "Content here.")
 
         assert result == "Context sentence."
         call_kwargs = mock_client.chat.completions.create.call_args[1]
         assert call_kwargs["max_tokens"] == 150
         assert "Title: My Title" in call_kwargs["messages"][1]["content"]
 
-    def test_hypothetical_questions_parses_lines(self):
+    async def test_hypothetical_questions_parses_lines(self):
         svc = LLMService(api_key="sk-test")
         mock_client = MagicMock()
         mock_choice = MagicMock()
@@ -73,13 +73,13 @@ class TestLLMService:
         mock_client.chat.completions.create.return_value.choices = [mock_choice]
 
         with patch.object(svc, "_get_client", return_value=mock_client):
-            questions = svc.hypothetical_questions("Some chunk text.")
+            questions = await svc.hypothetical_questions("Some chunk text.")
 
         assert questions == ["Question one", "Question two", "Question three"]
         call_kwargs = mock_client.chat.completions.create.call_args[1]
         assert call_kwargs["max_tokens"] == 200
 
-    def test_hypothetical_questions_strips_bullets_and_dashes(self):
+    async def test_hypothetical_questions_strips_bullets_and_dashes(self):
         svc = LLMService(api_key="sk-test")
         mock_client = MagicMock()
         mock_choice = MagicMock()
@@ -87,11 +87,11 @@ class TestLLMService:
         mock_client.chat.completions.create.return_value.choices = [mock_choice]
 
         with patch.object(svc, "_get_client", return_value=mock_client):
-            questions = svc.hypothetical_questions("Some chunk text.")
+            questions = await svc.hypothetical_questions("Some chunk text.")
 
         assert questions == ["Question one", "Question two"]
 
-    def test_hypothetical_questions_skips_empty_lines(self):
+    async def test_hypothetical_questions_skips_empty_lines(self):
         svc = LLMService(api_key="sk-test")
         mock_client = MagicMock()
         mock_choice = MagicMock()
@@ -99,11 +99,11 @@ class TestLLMService:
         mock_client.chat.completions.create.return_value.choices = [mock_choice]
 
         with patch.object(svc, "_get_client", return_value=mock_client):
-            questions = svc.hypothetical_questions("Some chunk text.")
+            questions = await svc.hypothetical_questions("Some chunk text.")
 
         assert len(questions) == 2
 
-    def test__call_returns_empty_string_when_content_is_none(self):
+    async def test__call_returns_empty_string_when_content_is_none(self):
         svc = LLMService(api_key="sk-test")
         mock_client = MagicMock()
         mock_choice = MagicMock()
@@ -111,7 +111,7 @@ class TestLLMService:
         mock_client.chat.completions.create.return_value.choices = [mock_choice]
 
         with patch.object(svc, "_get_client", return_value=mock_client):
-            result = svc._call("system prompt", "user prompt")
+            result = await svc._call("system prompt", "user prompt")
 
         assert result == ""
 

@@ -1,6 +1,6 @@
 import os
 from collections.abc import AsyncIterator
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest_asyncio
@@ -17,7 +17,6 @@ from app.core.db import get_session  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.models.base import Base  # noqa: E402
 from app.services.embeddings import EmbeddingService  # noqa: E402
-from app.services.llm import LLMService  # noqa: E402
 
 TEST_DATABASE_URL = os.environ.get("DATABASE_URL", settings.database_url)
 
@@ -31,17 +30,9 @@ def _fake_embedding_service() -> MagicMock:
     import numpy as np
 
     svc = MagicMock(spec=EmbeddingService)
-    svc.embed.return_value = np.zeros(1536, dtype=np.float32)
+    svc.embed = AsyncMock(return_value=np.zeros(1536, dtype=np.float32))
     svc.is_available = True
     svc.dim = 1536
-    return svc
-
-
-def _fake_llm_service() -> MagicMock:
-    svc = MagicMock(spec=LLMService)
-    svc.is_available = True
-    svc.model_name = "gpt-4.1-nano"
-    svc.summarize.return_value = "This is a mocked document summary."
     return svc
 
 

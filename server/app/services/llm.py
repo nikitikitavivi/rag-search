@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 
@@ -28,37 +29,62 @@ class LLMService:
         self._client = OpenAI(api_key=self._api_key)
         return self._client
 
-    def _call(self, system: str, user: str, max_tokens: int = 300) -> str:
-        client = self._get_client()
-        resp = client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            max_tokens=max_tokens,
-            temperature=0.2,
-        )
-        return resp.choices[0].message.content or ""
+    async def _call(self, system: str, user: str, max_tokens: int = 300) -> str:
+        def _run() -> str:
+            client = self._get_client()
+            resp = client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                max_tokens=max_tokens,
+                temperature=0.2,
+            )
+            return resp.choices[0].message.content or ""
 
-    def stream_chat(
+        return await asyncio.to_thread(_run)
+
+    async def stream_chat(
         self, system: str, user: str, max_tokens: int = 500
     ) -> Any:
         if not self.is_available:
             raise RuntimeError("OpenAI API key is not configured")
-        client = self._get_client()
-        return client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            max_tokens=max_tokens,
-            temperature=0.2,
-            stream=True,
-        )
 
-    def summarize(self, content: str) -> str:
+        queue: asyncio.Queue[tuple[bool, str]] = asyncio.Queue()
+
+        def _run() -> None:
+            try:
+                client = self._get_client()
+                stream = client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=0.2,
+                    stream=True,
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        queue.put_nowait((False, delta))
+                queue.put_nowait((True, ""))
+            except Exception as exc:
+                queue.put_nowait((True, str(exc)))
+
+        asyncio.ensure_future(asyncio.to_thread(_run))
+
+        while True:
+            done, payload = await queue.get()
+            if done:
+                if payload:
+                    raise RuntimeError(payload)
+                return
+            yield payload
+
+    async def summarize(self, content: str) -> str:
         if not self.is_available:
             raise RuntimeError("OpenAI API key is not configured")
         prompt = (
@@ -68,9 +94,9 @@ class LLMService:
             "If the content is empty or meaningless, say: 'No content to summarize.'\n\n"
             f"Document content:\n{content[:8000]}"
         )
-        return self._call("You are a helpful assistant.", prompt, max_tokens=300)
+        return await self._call("You are a helpful assistant.", prompt, max_tokens=300)
 
-    def document_context(self, title: str, content: str) -> str:
+    async def document_context(self, title: str, content: str) -> str:
         if not self.is_available:
             raise RuntimeError("OpenAI API key is not configured")
         prompt = (
@@ -80,9 +106,9 @@ class LLMService:
             "This sentence will be prepended to search-indexed chunks to improve retrieval.\n\n"
             f"Title: {title}\n\nContent:\n{content[:4000]}"
         )
-        return self._call("You are a helpful assistant.", prompt, max_tokens=150)
+        return await self._call("You are a helpful assistant.", prompt, max_tokens=150)
 
-    def hypothetical_questions(self, chunk_text: str) -> list[str]:
+    async def hypothetical_questions(self, chunk_text: str) -> list[str]:
         if not self.is_available:
             raise RuntimeError("OpenAI API key is not configured")
         prompt = (
@@ -92,7 +118,7 @@ class LLMService:
             "No numbering, no extra text.\n\n"
             f"Chunk:\n{chunk_text[:3000]}"
         )
-        raw = self._call("You are a helpful assistant.", prompt, max_tokens=200)
+        raw = await self._call("You are a helpful assistant.", prompt, max_tokens=200)
         return [line.strip("- ").strip() for line in raw.split("\n") if line.strip()]
 
 

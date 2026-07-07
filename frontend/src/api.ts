@@ -120,8 +120,9 @@ export async function getDocument(id: string): Promise<DocumentItem> {
   return resp.json();
 }
 
-export async function search(q: string, limit: number = 20): Promise<SearchResult[]> {
+export async function search(q: string, type?: "clients" | "documents", limit: number = 50): Promise<SearchResult[]> {
   const params = new URLSearchParams({ q, limit: String(limit) });
+  if (type) params.set("type", type);
   const resp = await fetch(`${API_BASE}/v1/search?${params}`);
   if (!resp.ok) return handleError(resp);
   return resp.json();

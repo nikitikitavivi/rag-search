@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import conflict, not_found
-from app.core.deps import get_db
+from app.core.db import get_session
 from app.schemas.client import ClientCreate, ClientOut, ClientPage
 from app.schemas.common import ErrorResponse
 from app.services.clients import ClientService, DuplicateEmailError
 
-SessionDep = Annotated[AsyncSession, Depends(get_db)]
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -35,12 +35,12 @@ async def create_client(payload: ClientCreate, db: SessionDep) -> ClientOut:
     svc = ClientService(db)
     try:
         client = await svc.create(payload)
-    except DuplicateEmailError:
+    except DuplicateEmailError as err:
         raise conflict(
             "CLIENT_EMAIL_CONFLICT",
             "A client with this email already exists",
             resource_id=payload.email,
-        )
+        ) from err
     return ClientOut.model_validate(client)
 
 

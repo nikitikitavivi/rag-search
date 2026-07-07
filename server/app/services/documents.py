@@ -68,14 +68,14 @@ class DocumentService:
 
         doc_context = ""
         try:
-            doc_context = llm.document_context(payload.title, payload.content)
+            doc_context = await llm.document_context(payload.title, payload.content)
         except Exception as exc:
             logger.warning("Document context generation failed: %s", exc)
 
         for i, chunk_text in enumerate(chunks_text):
             questions: list[str] = []
             try:
-                questions = llm.hypothetical_questions(chunk_text)
+                questions = await llm.hypothetical_questions(chunk_text)
             except Exception as exc:
                 logger.warning("Hypothetical questions failed for chunk %d: %s", i, exc)
 
@@ -83,7 +83,7 @@ class DocumentService:
 
             embedding: list[float] | None = None
             try:
-                embedding = emb_service.embed(enriched).tolist()
+                embedding = (await emb_service.embed(enriched)).tolist()
             except Exception as exc:
                 logger.warning("Embedding failed for chunk %d: %s", i, exc)
 

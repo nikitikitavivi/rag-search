@@ -1,13 +1,13 @@
 # RAG Search API
 
-WealthTech search API across clients and documents. Built with FastAPI, Postgres + pgvector, local BGE embeddings, and OpenAI LLM summaries.
+WealthTech search API across clients and documents. Built with FastAPI, Postgres + pgvector, OpenAI embeddings, and LLM enrichment.
 
 ## Features
 
-- **Client CRUD** — create, list, get clients
-- **Document CRUD** — create documents for a client, auto-embedded on ingest
-- **Client full-text search** — weighted `tsvector` search across name/email/description with `ts_rank` scoring
-- **Document summaries** — LLM-generated summaries via `gpt-4.1-nano`, cached in Postgres
+- **Client CRUD** — create, list, get clients (by id or email lookup)
+- **Document CRUD** — create documents for a client, auto-chunked, enriched, and embedded on ingest
+- **Hybrid search** — weighted FTS for clients + RRF-fused vector/lexical search across document chunks
+- **AI chat** — streaming RAG chat endpoint with cited sources
 - **Swagger docs** — auto-generated at `/docs`
 
 ## Quickstart
@@ -20,7 +20,7 @@ WealthTech search API across clients and documents. Built with FastAPI, Postgres
 ### Run with Docker Compose
 
 ```bash
-# 1. Copy env and add your OpenAI key (optional — summary endpoint returns 503 without it)
+# 1. Copy env and add your OpenAI keys
 cp .env.example .env
 # edit .env: OPENAI_API_KEY=sk-...
 
@@ -44,10 +44,9 @@ docker-compose up -d db
 # 2. Create a venv and install deps
 python3 -m venv .venv
 source .venv/bin/activate
-pip install fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" asyncpg pydantic pydantic-settings pgvector openai alembic httpx pytest pytest-asyncio numpy email-validator
+cd server && pip install -e ".[dev]"
 
 # 3. Run tests
-cd server
 python -m pytest tests/ -v
 ```
 
@@ -56,13 +55,17 @@ python -m pytest tests/ -v
 | Method | Path | Purpose | Error codes |
 |---|---|---|---|
 | `POST` | `/v1/clients` | Create a client | 422, 409 |
-| `GET` | `/v1/clients` | List clients | — |
+| `GET` | `/v1/clients` | List clients (cursor pagination) | — |
 | `GET` | `/v1/clients/:id` | Get a client | 404 |
-| `POST` | `/v1/clients/:id/documents` | Create a document (auto-embeds) | 404, 422 |
+| `GET` | `/v1/clients/lookup?email=` | Look up client by email | 404 |
+| `POST` | `/v1/clients/:id/documents` | Create a document (chunk, enrich, embed) | 404, 422, 503 |
+| `GET` | `/v1/documents` | List documents (cursor pagination) | — |
 | `GET` | `/v1/documents/:id` | Get a document | 404 |
-| `GET` | `/v1/documents/:id/summary` | LLM summary (cached) | 404, 503 |
-| `GET` | `/v1/search?q=` | Search clients (FTS, ranked) | 400 |
+| `GET` | `/v1/search?q=&type=` | Hybrid search (FTS + RRF fusion), optional `type=clients|documents` filter | 400 |
+| `POST` | `/v1/chat` | Streaming RAG chat (SSE) | — |
 | `GET` | `/health` | Health check | — |
+
+> `/v1/search` accepts an optional `type` parameter to filter results to only clients or documents. When omitted, results are grouped by type (clients first, then documents); scores are not comparable across types.
 
 All errors return a shared `ErrorResponse` schema:
 ```json
@@ -94,8 +97,7 @@ Response (201):
   "email": "john.doe@neviswealth.com",
   "description": "Wealth management client at NevisWealth.",
   "social_links": ["https://linkedin.com/in/johndoe"],
-  "created_at": "2026-07-06T19:00:00Z",
-  "updated_at": "2026-07-06T19:00:00Z"
+  "created_at": "2026-07-06T19:00:00Z"
 }
 ```
 
@@ -118,8 +120,7 @@ Response (200):
       "email": "john.doe@neviswealth.com",
       "description": "Wealth management client at NevisWealth.",
       "social_links": ["https://linkedin.com/in/johndoe"],
-      "created_at": "2026-07-06T19:00:00Z",
-      "updated_at": "2026-07-06T19:00:00Z"
+      "created_at": "2026-07-06T19:00:00Z"
     }
   }
 ]
@@ -134,23 +135,33 @@ curl -X POST "http://localhost:8000/v1/clients/${CLIENT_ID}/documents" \
   -d '{ "title": "Utility Bill", "content": "This utility bill serves as address proof." }'
 ```
 
-### Get a document summary
+### Search across clients and documents
 
 ```bash
-DOC_ID="..."
-curl "http://localhost:8000/v1/documents/${DOC_ID}/summary"
+curl "http://localhost:8000/v1/search?q=wealth+management"
 ```
 
 ## Architecture
 
 - **FastAPI** (async) + **SQLAlchemy 2.0 async** + **asyncpg**
 - **Postgres 18 + pgvector** — one DB for relational data, vectors, and FTS
-- **Embeddings**: `bge-base-en-v1.5` (local, in-process, 768-dim)
-- **LLM**: `gpt-4.1-nano` (OpenAI, summary only, cached in DB)
+- **Embeddings**: `text-embedding-3-small` (OpenAI API, 1536-dim)
+- **LLM**: `gpt-4.1-nano` (OpenAI, enrichment + RAG chat)
 - **Client search**: weighted generated `tsvector` column + GIN index + `websearch_to_tsquery` + `ts_rank`
+- **Document search**: vector cosine similarity + lexical `ts_rank`, fused via Reciprocal Rank Fusion (RRF)
 - **Migrations**: Alembic
 
 See `ARCHITECTURE.md` for the full design document.
+
+## Trade-offs
+
+**Document ingest is synchronous and expensive.** Creating a document triggers chunking, LLM enrichment (document context + per-chunk hypothetical questions), and embedding — all inside the request/response cycle within a single DB transaction. A document at the max 1,000,000-char limit produces ~1,000 chunks, each making sequential LLM and embedding API calls. With no authentication, this is a cost and DoS vector: anyone can burn OpenAI credits and hold a DB connection for minutes.
+
+Future mitigations (not implemented):
+- Lower the max content size to a smaller practical ceiling.
+- Batch embeddings (OpenAI accepts up to 2048 inputs per request).
+- Offload enrichment to a background task and return 201 with an `indexing` status immediately.
+- Add authentication so only trusted callers can trigger ingestion.
 
 ## Project layout
 
@@ -175,11 +186,13 @@ rag-search/
 
 ## Tests
 
-31 tests covering golden flows and edge cases:
+73 tests covering golden flows, edge cases, and service-level behaviour:
 
-- **Golden tests** (`test_golden.py`): end-to-end flows — client search by email (TASK.md example), document creation + summary caching, error coverage (404/409/422/400), FTS ranking weights
-- **Unit tests**: client CRUD, document CRUD, search variants (name/email/description/phrase/limit), summary caching + 503
-- Embedding and LLM services are mocked in tests (no 440MB model download or OpenAI key needed)
+- **Golden tests** (`test_golden.py`): end-to-end flows — client search by email (TASK.md example), document creation + chunking, error coverage (404/409/422/400), FTS ranking weights
+- **CRUD tests** (`test_clients.py`, `test_documents.py`): client CRUD, document CRUD with pagination
+- **Search tests** (`test_search.py`, `test_search_service.py`): hybrid search across clients + documents, RRF fusion, score ordering, empty/bad queries
+- **Service-level tests** (`test_embeddings.py`, `test_llm.py`): embedding generation, LLM enrichment (context + questions), streaming chat
+- Embedding and LLM services are mocked in tests (no API keys needed)
 
 ```bash
 cd server && python -m pytest tests/ -v

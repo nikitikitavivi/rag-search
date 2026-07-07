@@ -3,6 +3,10 @@
 Each document targets a distinct topic. Probe phrases are designed so that
 *no word* in the probe appears in the target document's title or content,
 testing pure semantic retrieval via embedding similarity.
+
+The "Residential Verification Statement" → "address proof" mapping directly
+covers the TASK.md requirement: 'searching for "address proof" should also
+return documents containing "utility bill".'
 """
 
 import asyncio
@@ -405,6 +409,21 @@ DOCUMENTS = [
             "messaging platforms, and automated incident response integrations."
         ),
         "probe": "docker kubernetes serverless",
+    },
+    {
+        "title": "Residential Verification Statement",
+        "content": (
+            "This monthly service statement confirms the registered location of "
+            "the account holder. The document includes the name of the subscriber, "
+            "the premises where service is delivered, and the period of consumption "
+            "covered by this statement. It serves as official confirmation of the "
+            "connection between an individual and a fixed geographic location. "
+            "Issuing authority is the local regulated provider of essential "
+            "household services including electricity supply and water distribution. "
+            "Statement identifier and meter reference numbers are printed on the "
+            "upper section of each page."
+        ),
+        "probe": "address proof",
     },
 ]
 

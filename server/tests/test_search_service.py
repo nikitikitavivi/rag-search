@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
@@ -29,14 +29,14 @@ def _available_emb(query_vec=None):
 
 @pytest.mark.asyncio
 async def test_search_clients_empty_query(db_session):
-    service = SearchService(db_session)
+    service = SearchService(db_session, _unavailable_emb())
     results = await service.search_clients("")
     assert results == []
 
 
 @pytest.mark.asyncio
 async def test_search_clients_whitespace_query(db_session):
-    service = SearchService(db_session)
+    service = SearchService(db_session, _unavailable_emb())
     results = await service.search_clients("   ")
     assert results == []
 
@@ -47,7 +47,7 @@ async def test_search_clients_finds_by_name(db_session):
     db_session.add(client)
     await db_session.commit()
 
-    service = SearchService(db_session)
+    service = SearchService(db_session, _unavailable_emb())
     results = await service.search_clients("Alice")
     assert len(results) >= 1
     assert results[0]["first_name"] == "Alice"
@@ -61,7 +61,7 @@ async def test_search_clients_finds_by_email(db_session):
     db_session.add(client)
     await db_session.commit()
 
-    service = SearchService(db_session)
+    service = SearchService(db_session, _unavailable_emb())
     results = await service.search_clients("neviswealth")
     assert len(results) >= 1
     assert results[0]["email"] == "bob@neviswealth.com"
@@ -73,7 +73,7 @@ async def test_search_clients_no_match(db_session):
     db_session.add(client)
     await db_session.commit()
 
-    service = SearchService(db_session)
+    service = SearchService(db_session, _unavailable_emb())
     results = await service.search_clients("xyznonexistent98765")
     assert results == []
 
@@ -87,21 +87,21 @@ async def test_search_clients_respects_limit(db_session):
         db_session.add(client)
     await db_session.commit()
 
-    service = SearchService(db_session)
+    service = SearchService(db_session, _unavailable_emb())
     results = await service.search_clients("Test", limit=3)
     assert len(results) <= 3
 
 
 @pytest.mark.asyncio
 async def test_search_documents_rrf_empty_query(db_session):
-    service = SearchService(db_session)
+    service = SearchService(db_session, _unavailable_emb())
     results = await service.search_documents_rrf("")
     assert results == []
 
 
 @pytest.mark.asyncio
 async def test_search_documents_rrf_whitespace_query(db_session):
-    service = SearchService(db_session)
+    service = SearchService(db_session, _unavailable_emb())
     results = await service.search_documents_rrf("   ")
     assert results == []
 
@@ -125,12 +125,8 @@ async def test_search_documents_rrf_bm25_fallback_when_vector_unavailable(db_ses
     db_session.add(chunk)
     await db_session.commit()
 
-    with patch(
-        "app.services.search.get_embedding_service",
-        return_value=_unavailable_emb(),
-    ):
-        service = SearchService(db_session)
-        results = await service.search_documents_rrf("passport")
+    service = SearchService(db_session, _unavailable_emb())
+    results = await service.search_documents_rrf("passport")
 
     assert len(results) >= 1
     assert results[0]["title"] == "Passport"
@@ -158,12 +154,8 @@ async def test_search_documents_rrf_vector_search_populates_hits(db_session):
     await db_session.commit()
 
     mock_emb = _available_emb(query_vec=query_vec)
-    with patch(
-        "app.services.search.get_embedding_service",
-        return_value=mock_emb,
-    ):
-        service = SearchService(db_session)
-        results = await service.search_documents_rrf("utility bill")
+    service = SearchService(db_session, mock_emb)
+    results = await service.search_documents_rrf("utility bill")
 
     assert len(results) >= 1
     assert results[0]["title"] == "Utility Bill"
@@ -192,12 +184,8 @@ async def test_search_documents_rrf_vector_failure_continues_with_bm25(db_sessio
     mock_emb.is_available = True
     mock_emb.embed = AsyncMock(side_effect=RuntimeError("API error"))
 
-    with patch(
-        "app.services.search.get_embedding_service",
-        return_value=mock_emb,
-    ):
-        service = SearchService(db_session)
-        results = await service.search_documents_rrf("tax return")
+    service = SearchService(db_session, mock_emb)
+    results = await service.search_documents_rrf("tax return")
 
     assert len(results) >= 1
     assert results[0]["title"] == "Tax Return"
@@ -205,7 +193,7 @@ async def test_search_documents_rrf_vector_failure_continues_with_bm25(db_sessio
 
 @pytest.mark.asyncio
 async def test_search_documents_rrf_no_results(db_session):
-    service = SearchService(db_session)
+    service = SearchService(db_session, _unavailable_emb())
     results = await service.search_documents_rrf("xyznonexistent98765")
     assert results == []
 
@@ -230,7 +218,7 @@ async def test_search_documents_rrf_respects_limit(db_session):
         db_session.add(chunk)
     await db_session.commit()
 
-    service = SearchService(db_session)
+    service = SearchService(db_session, _unavailable_emb())
     results = await service.search_documents_rrf("Invoice", limit=2)
     assert len(results) <= 2
 
@@ -256,12 +244,8 @@ async def test_search_documents_rrf_filters_below_min_score(db_session):
     await db_session.commit()
 
     mock_emb = _available_emb(query_vec=np.ones(1536, dtype=np.float32))
-    with patch(
-        "app.services.search.get_embedding_service",
-        return_value=mock_emb,
-    ):
-        service = SearchService(db_session)
-        results = await service.search_documents_rrf("totallyunrelatedquery", limit=10)
+    service = SearchService(db_session, mock_emb)
+    results = await service.search_documents_rrf("totallyunrelatedquery", limit=10)
 
     for r in results:
         assert r["score"] >= MIN_SCORE

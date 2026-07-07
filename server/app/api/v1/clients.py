@@ -4,7 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.errors import conflict, not_found
+from app.api.errors import bad_request, conflict, not_found
+from app.core.cursor import InvalidCursorError
 from app.core.db import get_session
 from app.schemas.client import ClientCreate, ClientOut, ClientPage
 from app.schemas.common import ErrorResponse
@@ -56,7 +57,10 @@ async def list_clients(
     cursor: str | None = Query(None, description="Opaque cursor from the previous page"),
 ) -> ClientPage:
     svc = ClientService(db)
-    items, next_cursor, has_more = await svc.list(limit, cursor)
+    try:
+        items, next_cursor, has_more = await svc.list(limit, cursor)
+    except InvalidCursorError as err:
+        raise bad_request("INVALID_CURSOR", str(err)) from err
     return ClientPage(
         items=[ClientOut.model_validate(c) for c in items],
         next_cursor=next_cursor,

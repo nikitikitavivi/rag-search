@@ -1,5 +1,6 @@
 from uuid import UUID
 
+import asyncpg
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,10 +32,9 @@ class ClientService:
             await self._session.commit()
         except IntegrityError as exc:
             await self._session.rollback()
-            if (
-                exc.orig
-                and hasattr(exc.orig, "diag")
-                and exc.orig.diag.constraint_name == "clients_email_key"
+            cause = exc.orig.__cause__ if exc.orig else None
+            if isinstance(cause, asyncpg.exceptions.UniqueViolationError) and (
+                cause.constraint_name and "email" in cause.constraint_name
             ):
                 raise DuplicateEmailError(
                     f"Client with email {payload.email} already exists"

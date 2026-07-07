@@ -8,7 +8,9 @@ import base64
 import json
 from datetime import datetime
 
-from app.api.errors import bad_request
+
+class InvalidCursorError(Exception):
+    """Raised when a cursor cannot be decoded — translate to 400 at the API boundary."""
 
 
 def encode_cursor(created_at: datetime, row_id: str) -> str:
@@ -21,4 +23,4 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
         payload = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
         return datetime.fromisoformat(payload["ts"]), payload["id"]
     except Exception as exc:
-        raise bad_request("INVALID_CURSOR", "Invalid or expired cursor") from exc
+        raise InvalidCursorError("Invalid or expired cursor") from exc

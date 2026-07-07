@@ -10,8 +10,8 @@ from app.models.client import Client
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.schemas.document import DocumentCreate
-from app.services.embeddings import get_embedding_service
-from app.services.llm import get_llm_service
+from app.services.embeddings import EmbeddingService
+from app.services.llm import LLMService
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +42,42 @@ def _build_enriched_text(doc_context: str, questions: list[str], chunk_content: 
 
 
 class DocumentService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        emb_service: EmbeddingService,
+        llm_service: LLMService,
+    ) -> None:
         self._session = session
+        self._emb_service = emb_service
+        self._llm_service = llm_service
 
     async def create(
         self, client_id: UUID, payload: DocumentCreate
     ) -> Document:
-        client = (
-            await self._session.execute(select(Client).where(Client.id == client_id))
-        ).scalar_one_or_none()
+        result = await self._session.execute(select(Client).where(Client.id == client_id))
+        client = result.scalar_one_or_none()
         if client is None:
             raise ClientNotFoundError(f"Client {client_id} not found")
+
+        chunks_text = _splitter.split_text(payload.content)
+
+        doc_context = ""
+        if self._llm_service.is_available:
+            doc_context = await self._llm_service.document_context(payload.title, payload.content)
+
+        per_chunk_enrichments: list[str] = []
+        for chunk_text in chunks_text:
+            questions: list[str] = []
+            if self._llm_service.is_available:
+                questions = await self._llm_service.hypothetical_questions(chunk_text)
+            enriched = _build_enriched_text(doc_context, questions, chunk_text)
+            per_chunk_enrichments.append(enriched)
+
+        embeddings: list[list[float] | None] = [None] * len(chunks_text)
+        if self._emb_service.is_available and per_chunk_enrichments:
+            vectors = await self._emb_service.embed_batch(per_chunk_enrichments)
+            embeddings = [v.tolist() for v in vectors]
 
         document = Document(
             client_id=client_id,
@@ -62,38 +87,14 @@ class DocumentService:
         self._session.add(document)
         await self._session.flush()
 
-        chunks_text = _splitter.split_text(payload.content)
-        emb_service = get_embedding_service()
-        llm = get_llm_service()
-
-        doc_context = ""
-        try:
-            doc_context = await llm.document_context(payload.title, payload.content)
-        except Exception as exc:
-            logger.warning("Document context generation failed: %s", exc)
-
         for i, chunk_text in enumerate(chunks_text):
-            questions: list[str] = []
-            try:
-                questions = await llm.hypothetical_questions(chunk_text)
-            except Exception as exc:
-                logger.warning("Hypothetical questions failed for chunk %d: %s", i, exc)
-
-            enriched = _build_enriched_text(doc_context, questions, chunk_text)
-
-            embedding: list[float] | None = None
-            try:
-                embedding = (await emb_service.embed(enriched)).tolist()
-            except Exception as exc:
-                logger.warning("Embedding failed for chunk %d: %s", i, exc)
-
             chunk = DocumentChunk(
                 document_id=document.id,
                 chunk_index=i,
                 content=chunk_text,
-                enriched_content=enriched,
+                enriched_content=per_chunk_enrichments[i],
                 search_text=f"{payload.title}\n{chunk_text}",
-                embedding=embedding,
+                embedding=embeddings[i],
                 chunk_metadata={
                     "document_title": payload.title,
                     "client_id": str(client_id),
@@ -123,7 +124,7 @@ class DocumentService:
 
         stmt = stmt.limit(limit + 1)
         result = await self._session.execute(stmt)
-        rows = list(result.all())
+        rows = [tuple(r) for r in result.all()]
 
         has_more = len(rows) > limit
         rows = rows[:limit]

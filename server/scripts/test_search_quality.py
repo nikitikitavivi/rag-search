@@ -30,6 +30,22 @@ async def fetch_all_clients(client: httpx.AsyncClient) -> list[dict]:
     return items
 
 
+async def fetch_all_documents(client: httpx.AsyncClient) -> list[dict]:
+    items: list[dict] = []
+    cursor: str | None = None
+    while True:
+        params: dict[str, str | int] = {"limit": 100}
+        if cursor:
+            params["cursor"] = cursor
+        resp = await client.get("/v1/documents", params=params)
+        page = resp.json()
+        items.extend(page["items"])
+        if not page["has_more"]:
+            break
+        cursor = page["next_cursor"]
+    return items
+
+
 def pick_some(items: list[dict], field: str) -> str | None:
     for item in items:
         val = item.get(field)
@@ -156,6 +172,30 @@ async def main():
 
         multi = await search(client, "retired london")
         results.append(Result("Multi-word: AND", "retired london", "AND of terms", multi))
+
+        # --- Document (semantic) search quality ---
+        all_docs = await fetch_all_documents(client)
+        print(f"Total documents in DB: {len(all_docs)}\n")
+
+        doc_probes = [
+            ("diabetes", "hyperglycemia ketoacidosis diabetic"),
+            ("ip law", "pirated counterfeit plagiarized"),
+            ("real estate", "mortgage loan homeowner"),
+            ("cloud computing", "docker kubernetes serverless"),
+            ("utility bill → address proof", "address proof"),
+        ]
+        for label, probe in doc_probes:
+            hits = await search(client, probe, limit=5)
+            doc_hits = [h for h in hits if h.get("type") == "document"]
+            results.append(
+                Result(
+                    f"Doc probe: {label}",
+                    probe,
+                    "semantic match",
+                    doc_hits,
+                    f"got {len(doc_hits)} document hits",
+                )
+            )
 
         print_report(results, total)
 

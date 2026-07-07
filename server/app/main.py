@@ -35,7 +35,9 @@ def _run_migrations() -> None:
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI):
     if os.environ.get("VERCEL"):
-        _run_migrations()
+        import asyncio
+
+        await asyncio.to_thread(_run_migrations)
     yield
 
 

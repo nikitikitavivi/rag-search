@@ -56,11 +56,25 @@ async def _setup_db() -> AsyncIterator[None]:
                 """
                 ALTER TABLE clients ADD COLUMN search_doc tsvector
                 GENERATED ALWAYS AS (
-                    setweight(to_tsvector('simple', coalesce(first_name, '')), 'A') ||
-                    setweight(to_tsvector('simple', coalesce(last_name,  '')), 'A') ||
-                    setweight(to_tsvector('simple', coalesce(regexp_replace(email, '[@.]', ' ', 'g'), '')), 'A') ||
-                    setweight(to_tsvector('simple', coalesce(description, '')), 'C') ||
-                    setweight(to_tsvector('simple', coalesce(regexp_replace(regexp_replace(regexp_replace(social_links::text, '[\[\]\"]', '', 'g'), ',', ' ', 'g'), '[:/.]', ' ', 'g'), '')), 'D')
+                    setweight(to_tsvector('simple',
+                        coalesce(first_name, '')), 'A') ||
+                    setweight(to_tsvector('simple',
+                        coalesce(last_name,  '')), 'A') ||
+                    setweight(to_tsvector('simple',
+                        coalesce(regexp_replace(email,
+                            '[@.]', ' ', 'g'), '')), 'A') ||
+                    setweight(to_tsvector('simple',
+                        coalesce(description, '')), 'C') ||
+                    setweight(to_tsvector('simple', coalesce(
+                        regexp_replace(
+                        regexp_replace(
+                        regexp_replace(
+                            social_links::text,
+                            '[\\[\\]"]', '', 'g'),
+                            ',', ' ', 'g'),
+                            '[:/.]', ' ', 'g'),
+                        '')
+                    ), 'D')
                 ) STORED
                 """
             )
@@ -125,7 +139,6 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
     import app.api.v1.documents as doc_mod
 
     fake_emb = _fake_embedding_service()
-    fake_llm = _fake_llm_service()
 
     original_get_emb = doc_mod.get_embedding_service
     doc_mod.get_embedding_service = lambda: fake_emb

@@ -1,13 +1,13 @@
 import logging
-from typing import Annotated, Any, Union
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.errors import not_found, unavailable
+from app.api.errors import not_found
 from app.core.cursor import decode_cursor, encode_cursor
 from app.core.deps import get_db
 from app.models.client import Client

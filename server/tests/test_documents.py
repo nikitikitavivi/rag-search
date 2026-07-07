@@ -1,4 +1,8 @@
 import pytest
+from sqlalchemy import select
+
+from app.models.document_chunk import DocumentChunk
+from tests.conftest import TestSessionLocal
 
 CLIENT_PAYLOAD = {
     "first_name": "John",
@@ -66,10 +70,6 @@ async def test_get_document_success(client):
 @pytest.mark.asyncio
 async def test_create_document_stores_embedding_chunk(client):
     """Verify the document_chunks row was created with a 1536-dim vector."""
-    from sqlalchemy import select
-    from app.models.document_chunk import DocumentChunk
-    from tests.conftest import TestSessionLocal
-
     cid = await _make_client(client)
     create = await client.post(f"/v1/clients/{cid}/documents", json=DOC_PAYLOAD)
     did = create.json()["id"]

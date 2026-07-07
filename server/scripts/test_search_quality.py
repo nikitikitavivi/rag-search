@@ -86,37 +86,73 @@ async def main():
         domain = email.split("@")[1].split(".")[0]
 
         results.append(Result("Name: exact full", full, f"find {full}", await search(client, full)))
-        results.append(Result("Name: first only", fname, f"clients named {fname}", await search(client, fname)))
-        results.append(Result("Name: last only", lname, f"clients named {lname}", await search(client, lname)))
-        results.append(Result("Name: lowercase", fname.lower(), "case insensitive", await search(client, fname.lower())))
-        results.append(Result("Name: UPPERCASE", fname.upper(), "case insensitive", await search(client, fname.upper())))
+        results.append(
+            Result("Name: first only", fname,
+                   f"clients named {fname}",
+                   await search(client, fname)))
+        results.append(
+            Result("Name: last only", lname,
+                   f"clients named {lname}",
+                   await search(client, lname)))
+        results.append(
+            Result("Name: lowercase", fname.lower(),
+                   "case insensitive",
+                   await search(client, fname.lower())))
+        results.append(
+            Result("Name: UPPERCASE", fname.upper(),
+                   "case insensitive",
+                   await search(client, fname.upper())))
 
-        results.append(Result("Email: full", email, f"find {email}", await search(client, email)))
-        results.append(Result("Email: domain", domain, f"clients with @{domain}", await search(client, domain)))
+        results.append(
+            Result("Email: full", email,
+                   f"find {email}",
+                   await search(client, email)))
+        results.append(
+            Result("Email: domain", domain,
+                   f"clients with @{domain}",
+                   await search(client, domain)))
 
         desc = first.get("description") or ""
         if desc:
             word = desc.split()[0].strip(".,;:?!")
-            results.append(Result("Description: single word", word, "word from description", await search(client, word)))
+            results.append(
+                Result("Description: single word", word,
+                       "word from description",
+                       await search(client, word)))
 
         social = first.get("social_links") or []
         if social:
             link = social[0]
             platform = link.split("//")[-1].split(".")[0]
-            results.append(Result("Social: platform", platform, "social link match", await search(client, platform)))
+            results.append(
+                Result("Social: platform", platform,
+                       "social link match",
+                       await search(client, platform)))
 
-        results.append(Result("Ranking: name > desc", f"{fname} vs phrase",
-                               "name match scores higher", await search(client, fname),
-                               f"check top scores all have {fname} in name"))
+        results.append(Result(
+            "Ranking: name > desc", f"{fname} vs phrase",
+            "name match scores higher", await search(client, fname),
+            f"check top scores all have {fname} in name"))
 
-        results.append(Result("Negative: gibberish", "xyzzyqwerty123", "0 results", await search(client, "xyzzyqwerty123")))
-        results.append(Result("Negative: stopword", "the", "likely 0 results", await search(client, "the")))
+        results.append(
+            Result("Negative: gibberish", "xyzzyqwerty123",
+                   "0 results",
+                   await search(client, "xyzzyqwerty123")))
+        results.append(
+            Result("Negative: stopword", "the",
+                   "likely 0 results",
+                   await search(client, "the")))
 
         limited = await search(client, fname, limit=3)
-        results.append(Result("Limit: max 3", f"{fname} limit=3", "<=3 results", limited, f"got {len(limited)}"))
+        results.append(
+            Result("Limit: max 3", f"{fname} limit=3",
+                   "<=3 results", limited,
+                   f"got {len(limited)}"))
 
         phrase_results = await search(client, '"retired executive"')
-        results.append(Result("Phrase: quoted", '"retired executive"', "phrase match", phrase_results))
+        results.append(
+            Result("Phrase: quoted", '"retired executive"',
+                   "phrase match", phrase_results))
 
         multi = await search(client, "retired london")
         results.append(Result("Multi-word: AND", "retired london", "AND of terms", multi))
@@ -147,10 +183,15 @@ def print_report(results: list[Result], total: int) -> None:
         print(f"  expected: {r.expected}")
         print(f"  hits:     {len(r.hits)}")
         if r.hits:
-            print(f"  top hit:  {r.top_hit_name} <{r.top_hit_email}>  score={r.top_score:.4f}")
+            name = r.top_hit_name
+            email = r.top_hit_email
+            print(f"  top hit:  {name} <{email}>  score={r.top_score:.4f}")
             if len(r.hits) > 1:
                 c2 = r.hits[1]["client"]
-                print(f"  2nd hit:  {c2['first_name']} {c2['last_name']}  score={r.hits[1]['score']:.4f}")
+                print(
+                    f"  2nd hit:  {c2['first_name']} {c2['last_name']}"
+                    f"  score={r.hits[1]['score']:.4f}"
+                )
         if r.note:
             print(f"  note:     {r.note}")
 

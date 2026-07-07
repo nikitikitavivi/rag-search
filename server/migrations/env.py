@@ -6,9 +6,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import app.models  # noqa: F401  - register all models on Base.metadata
 from app.core.config import settings
 from app.models.base import Base
-import app.models  # noqa: F401  - register all models on Base.metadata
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

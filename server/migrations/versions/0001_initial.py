@@ -5,7 +5,7 @@ Revises:
 Create Date: 2026-07-06
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
@@ -13,9 +13,9 @@ from pgvector.sqlalchemy import Vector  # type: ignore
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 revision: str = "0001_initial"
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -40,11 +40,25 @@ def upgrade() -> None:
         """
         ALTER TABLE clients ADD COLUMN search_doc tsvector
         GENERATED ALWAYS AS (
-            setweight(to_tsvector('simple', coalesce(first_name, '')), 'A') ||
-            setweight(to_tsvector('simple', coalesce(last_name,  '')), 'A') ||
-            setweight(to_tsvector('simple', coalesce(regexp_replace(email, '[@.]', ' ', 'g'), '')), 'A') ||
-            setweight(to_tsvector('simple', coalesce(description, '')), 'C') ||
-            setweight(to_tsvector('simple', coalesce(regexp_replace(regexp_replace(regexp_replace(social_links::text, '[\[\]\"]', '', 'g'), ',', ' ', 'g'), '[:/.]', ' ', 'g'), '')), 'D')
+            setweight(to_tsvector('simple',
+                coalesce(first_name, '')), 'A') ||
+            setweight(to_tsvector('simple',
+                coalesce(last_name,  '')), 'A') ||
+            setweight(to_tsvector('simple',
+                coalesce(regexp_replace(email,
+                    '[@.]', ' ', 'g'), '')), 'A') ||
+            setweight(to_tsvector('simple',
+                coalesce(description, '')), 'C') ||
+            setweight(to_tsvector('simple', coalesce(
+                regexp_replace(
+                regexp_replace(
+                regexp_replace(
+                    social_links::text,
+                    '[\\[\\]"]', '', 'g'),
+                    ',', ' ', 'g'),
+                    '[:/.]', ' ', 'g'),
+                '')
+            ), 'D')
         ) STORED
         """
     )

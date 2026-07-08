@@ -179,8 +179,8 @@ async def main():
 
         doc_probes = [
             ("diabetes", "hyperglycemia ketoacidosis diabetic"),
-            ("ip law", "pirated counterfeit plagiarized"),
-            ("real estate", "mortgage loan homeowner"),
+            ("ip law", "brand rights infringement"),
+            ("real estate", "house property valuation"),
             ("cloud computing", "docker kubernetes serverless"),
             ("utility bill → address proof", "address proof"),
         ]

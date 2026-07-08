@@ -37,52 +37,21 @@ def _sse_event(event_type: str, data: Any) -> str:
     return f"data: {payload}\n\n"
 
 
-def _build_context(
-    client_hits: list[dict[str, Any]],
-    doc_hits: list[dict[str, Any]],
-) -> str:
+def _build_context(doc_hits: list[dict[str, Any]]) -> str:
     parts: list[str] = []
-    idx = 0
-
-    if client_hits:
-        parts.append("CLIENTS:")
-        for hit in client_hits:
-            idx += 1
-            name = f"{hit.get('first_name', '')} {hit.get('last_name', '')}".strip()
-            desc = hit.get("description") or ""
-            email = hit.get("email", "")
-            parts.append(f"[{idx}] {name} <{email}> - {desc}")
-
-    if doc_hits:
-        parts.append("\nDOCUMENTS:")
-        for hit in doc_hits:
-            idx += 1
-            title = hit.get("title", "")
-            content = (hit.get("content") or "")[:800]
-            parts.append(f"[{idx}] {title}: \"{content}\"")
-
+    if not doc_hits:
+        return ""
+    parts.append("DOCUMENTS:")
+    for idx, hit in enumerate(doc_hits, start=1):
+        title = hit.get("title", "")
+        content = (hit.get("content") or "")[:800]
+        parts.append(f"[{idx}] {title}: \"{content}\"")
     return "\n".join(parts)
 
 
-def _build_sources(
-    client_hits: list[dict[str, Any]],
-    doc_hits: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+def _build_sources(doc_hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     sources: list[dict[str, Any]] = []
-    idx = 0
-
-    for hit in client_hits:
-        idx += 1
-        sources.append({
-            "num": idx,
-            "type": "client",
-            "id": str(hit["id"]),
-            "title": f"{hit.get('first_name','')} {hit.get('last_name','')}".strip(),
-            "score": float(hit.get("score", 0)),
-        })
-
-    for hit in doc_hits:
-        idx += 1
+    for idx, hit in enumerate(doc_hits, start=1):
         sources.append({
             "num": idx,
             "type": "document",
@@ -91,7 +60,6 @@ def _build_sources(
             "title": hit.get("title", ""),
             "score": float(hit.get("score", 0)),
         })
-
     return sources
 
 
@@ -108,7 +76,6 @@ async def chat(payload: ChatRequest, emb: EmbeddingDep, llm: LLMDep) -> Streamin
             svc = SearchService(session, emb)
 
             try:
-                client_hits = await svc.search_clients(question, limit=3)
                 doc_hits = await svc.search_documents_rrf(question, limit=20)
             except Exception:
                 logger.exception("Search failed during chat")
@@ -117,10 +84,7 @@ async def chat(payload: ChatRequest, emb: EmbeddingDep, llm: LLMDep) -> Streamin
 
             doc_hits = doc_hits[:5]
 
-            sources = _build_sources(client_hits, doc_hits)
-            yield _sse_event("sources", sources)
-
-            if not client_hits and not doc_hits:
+            if not doc_hits:
                 yield _sse_event(
                     "token",
                     "I could not find any relevant information to answer that question.",
@@ -128,7 +92,9 @@ async def chat(payload: ChatRequest, emb: EmbeddingDep, llm: LLMDep) -> Streamin
                 yield _sse_event("done", "")
                 return
 
-            context = _build_context(client_hits, doc_hits)
+            sources = _build_sources(doc_hits)
+            yield _sse_event("sources", sources)
+            context = _build_context(doc_hits)
             user_prompt = f"User question: {question}\n\nContext:\n{context}"
 
         try:

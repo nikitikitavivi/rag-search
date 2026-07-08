@@ -1,4 +1,4 @@
-.PHONY: install test cov lint format typecheck up down seed seed-docs seed-all logs
+.PHONY: install test cov lint format typecheck up down seed seed-docs seed-all seed-all-fresh migrate logs
 
 -include .env
 export
@@ -34,6 +34,11 @@ seed-docs:
 	python scripts/seed_documents.py
 
 seed-all: seed seed-docs
+
+seed-all-fresh: migrate seed seed-docs
+
+migrate:
+	alembic upgrade head
 
 logs:
 	docker-compose logs -f

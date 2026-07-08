@@ -181,7 +181,7 @@ async def main():
             ("diabetes", "hyperglycemia ketoacidosis diabetic"),
             ("ip law", "brand rights infringement"),
             ("real estate", "house property valuation"),
-            ("cloud computing", "docker kubernetes serverless"),
+            ("cloud computing", "container orchestration scaling"),
             ("utility bill → address proof", "address proof"),
         ]
         for label, probe in doc_probes:

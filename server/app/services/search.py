@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 RRF_K = 60
 MIN_SCORE = 0.005
-VECTOR_SIMILARITY_THRESHOLD = 0.35
+VECTOR_SIMILARITY_THRESHOLD = 0.25
 
 
 class SearchService:

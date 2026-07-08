@@ -1,4 +1,7 @@
-.PHONY: install test cov lint format typecheck up down seed seed-docs logs
+.PHONY: install test cov lint format typecheck up down seed seed-docs seed-all logs
+
+-include .env
+export
 
 install:
 	pip install -e ".[dev]"
@@ -29,6 +32,8 @@ seed:
 
 seed-docs:
 	python scripts/seed_documents.py
+
+seed-all: seed seed-docs
 
 logs:
 	docker-compose logs -f

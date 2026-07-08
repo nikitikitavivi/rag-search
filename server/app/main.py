@@ -38,9 +38,6 @@ async def _lifespan(app: FastAPI):
         import asyncio
 
         await asyncio.to_thread(_run_migrations)
-        from app.fixtures import run_fixtures
-
-        await run_fixtures()
     yield
 
 

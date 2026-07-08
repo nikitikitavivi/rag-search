@@ -160,7 +160,7 @@ async def _seed_clients() -> None:
             logger.info("Client fixtures already seeded (%d), skipping.", existing)
             return
 
-    clients_data = _generate_clients(40)
+    clients_data = _generate_clients(119)
     logger.info("Seeding client fixtures: %d clients...", len(clients_data))
     clients = [Client(
         first_name=d["first_name"],

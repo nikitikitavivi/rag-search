@@ -60,49 +60,56 @@ class DocumentService:
         if client is None:
             raise ClientNotFoundError(f"Client {client_id} not found")
 
-        chunks_text = _splitter.split_text(payload.content)
+        try:
+            chunks_text = _splitter.split_text(payload.content)
 
-        doc_context = ""
-        if self._llm_service.is_available:
-            doc_context = await self._llm_service.document_context(payload.title, payload.content)
-
-        per_chunk_enrichments: list[str] = []
-        for chunk_text in chunks_text:
-            questions: list[str] = []
+            doc_context = ""
             if self._llm_service.is_available:
-                questions = await self._llm_service.hypothetical_questions(chunk_text)
-            enriched = _build_enriched_text(doc_context, questions, chunk_text)
-            per_chunk_enrichments.append(enriched)
+                doc_context = await self._llm_service.document_context(
+                    payload.title, payload.content
+                )
 
-        embeddings: list[list[float] | None] = [None] * len(chunks_text)
-        if self._emb_service.is_available and per_chunk_enrichments:
-            vectors = await self._emb_service.embed_batch(per_chunk_enrichments)
-            embeddings = [v.tolist() for v in vectors]
+            per_chunk_enrichments: list[str] = []
+            for chunk_text in chunks_text:
+                questions: list[str] = []
+                if self._llm_service.is_available:
+                    questions = await self._llm_service.hypothetical_questions(chunk_text)
+                enriched = _build_enriched_text(doc_context, questions, chunk_text)
+                per_chunk_enrichments.append(enriched)
 
-        document = Document(
-            client_id=client_id,
-            title=payload.title,
-            content=payload.content,
-        )
-        self._session.add(document)
-        await self._session.flush()
+            embeddings: list[list[float] | None] = [None] * len(chunks_text)
+            if self._emb_service.is_available and per_chunk_enrichments:
+                vectors = await self._emb_service.embed_batch(per_chunk_enrichments)
+                embeddings = [v.tolist() for v in vectors]
 
-        for i, chunk_text in enumerate(chunks_text):
-            chunk = DocumentChunk(
-                document_id=document.id,
-                chunk_index=i,
-                content=chunk_text,
-                enriched_content=per_chunk_enrichments[i],
-                search_text=f"{payload.title}\n{chunk_text}",
-                embedding=embeddings[i],
-                chunk_metadata={
-                    "document_title": payload.title,
-                    "client_id": str(client_id),
-                },
+            document = Document(
+                client_id=client_id,
+                title=payload.title,
+                content=payload.content,
             )
-            self._session.add(chunk)
+            self._session.add(document)
+            await self._session.flush()
 
-        await self._session.commit()
+            for i, chunk_text in enumerate(chunks_text):
+                chunk = DocumentChunk(
+                    document_id=document.id,
+                    chunk_index=i,
+                    content=chunk_text,
+                    enriched_content=per_chunk_enrichments[i],
+                    search_text=f"{payload.title}\n{chunk_text}",
+                    embedding=embeddings[i],
+                    chunk_metadata={
+                        "document_title": payload.title,
+                        "client_id": str(client_id),
+                    },
+                )
+                self._session.add(chunk)
+
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            raise
+
         await self._session.refresh(document)
         return document
 

@@ -2,7 +2,9 @@
 
 WealthTech search API across clients and documents. Built with FastAPI, Postgres + pgvector, OpenAI embeddings, and LLM enrichment.
 
-vercel demo link https://rag-search-two.vercel.app/
+## Demo
+video: https://drive.google.com/file/d/1-73aXXbFbzxX335A9G1MgI78PvUCGuSg/view?usp=drive_link
+Vercel link:  https://rag-search-two.vercel.app/
 
 ## Features
 
@@ -49,7 +51,7 @@ Ingestion pipeline (on `POST /clients/{id}/documents`):
 ### Prerequisites
 
 - Docker
-- Python 3.11+ (for local test runs)
+- Python 3.11+ 
 
 ### Run with Docker Compose
 
@@ -99,75 +101,6 @@ All handled errors return a shared `ErrorResponse` schema:
 { "detail": { "code": "CLIENT_NOT_FOUND", "message": "Client not found", "resource_id": "uuid" } }
 ```
 
-## Example queries
-
-### Create a client
-
-```bash
-curl -X POST http://localhost:8000/v1/clients \
-  -H "Content-Type: application/json" \
-  -d '{
-    "first_name": "John",
-    "last_name": "Doe",
-    "email": "john.doe@neviswealth.com",
-    "description": "Wealth management client at NevisWealth.",
-    "social_links": ["https://linkedin.com/in/johndoe"]
-  }'
-```
-
-Response (201):
-```json
-{
-  "id": "a1b2c3d4-...",
-  "first_name": "John",
-  "last_name": "Doe",
-  "email": "john.doe@neviswealth.com",
-  "description": "Wealth management client at NevisWealth.",
-  "social_links": ["https://linkedin.com/in/johndoe"],
-  "created_at": "2026-07-06T19:00:00Z"
-}
-```
-
-### Search clients — TASK.md example
-
-```bash
-curl "http://localhost:8000/v1/search?q=NevisWealth"
-```
-
-Response (200):
-```json
-[
-  {
-    "type": "client",
-    "score": 0.06079271,
-    "client": {
-      "id": "a1b2c3d4-...",
-      "first_name": "John",
-      "last_name": "Doe",
-      "email": "john.doe@neviswealth.com",
-      "description": "Wealth management client at NevisWealth.",
-      "social_links": ["https://linkedin.com/in/johndoe"],
-      "created_at": "2026-07-06T19:00:00Z"
-    }
-  }
-]
-```
-
-### Create a document (auto-embedded)
-
-```bash
-CLIENT_ID="a1b2c3d4-..."
-curl -X POST "http://localhost:8000/v1/clients/${CLIENT_ID}/documents" \
-  -H "Content-Type: application/json" \
-  -d '{ "title": "Utility Bill", "content": "This utility bill serves as address proof." }'
-```
-
-### Search across clients and documents
-
-```bash
-curl "http://localhost:8000/v1/search?q=wealth+management"
-```
-
 ## Architecture
 
 - **FastAPI** (async) + **SQLAlchemy 2.0 async** + **asyncpg**
@@ -189,8 +122,6 @@ See `ARCHITECTURE.md` for the full design document.
 **No authentication or rate limiting.** All endpoints are public; acceptable for a take-home demo, not for production.
 
 **English-focused.** The FTS `simple` config does no stemming or language-specific processing; no multilingual tuning was done.
-
-**Graceful degradation.** Without OpenAI keys configured, documents are stored without embeddings and search falls back to lexical-only.
 
 **Frontend is a thin demo.** Minimal time was invested there; rough edges are expected.
 
@@ -231,7 +162,3 @@ rag-search/
 - **Service-level tests** (`test_embeddings.py`, `test_llm.py`): embedding generation and LLM enrichment (context + hypothetical questions), with mocked OpenAI clients
 
 Embedding and LLM services are mocked in tests (no API keys needed). Known gaps: the `/v1/chat` SSE endpoint and document-list pagination are not yet covered.
-
-```bash
-cd server && python -m pytest tests/ -v
-```

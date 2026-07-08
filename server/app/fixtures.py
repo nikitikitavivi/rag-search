@@ -6,6 +6,7 @@ services rather than HTTP so it works inside the serverless function.
 
 import logging
 import random
+from typing import Any
 
 from sqlalchemy import func, select
 
@@ -120,7 +121,7 @@ def _make_social_links(first: str, last: str) -> list[str]:
     return links
 
 
-def _generate_clients(n: int = 120) -> list[dict]:
+def _generate_clients(n: int = 120) -> list[dict[str, Any]]:
     clients = []
     used_emails: set[str] = set()
     for i in range(n):
@@ -623,8 +624,8 @@ async def _seed_documents() -> None:
     created = 0
     for doc in _SEED_DOCS:
         async with SessionLocal() as session:
-            svc = DocumentService(session, emb, llm)
-            await svc.create(
+            doc_svc = DocumentService(session, emb, llm)
+            await doc_svc.create(
                 owner_id, DocumentCreate(title=doc["title"], content=doc["content"])
             )
             created += 1

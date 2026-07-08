@@ -2,7 +2,6 @@ import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 _env_file = ".env" if os.path.isfile(".env") else None
 
 

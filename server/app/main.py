@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -22,6 +23,7 @@ def _run_migrations() -> None:
 
     from alembic import command
     from alembic.config import Config as AlembicConfig
+
     from app.core.config import settings
 
     alembic_cfg = AlembicConfig(str(alembic_ini))
@@ -33,7 +35,7 @@ def _run_migrations() -> None:
 
 
 @contextlib.asynccontextmanager
-async def _lifespan(app: FastAPI):
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("VERCEL"):
         import asyncio
 

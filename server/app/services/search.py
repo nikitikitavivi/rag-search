@@ -2,10 +2,10 @@ import asyncio
 import logging
 import re
 import uuid
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.embeddings import EmbeddingService
 
@@ -49,10 +49,10 @@ class SearchService:
             q_vec = await self._emb.embed(q)
             stmt = text(
                 "SELECT dc.id, "
-                "1 - (dc.embedding <=> :vec) AS similarity "
+                "1 - (dc.embedding <=> cast(:vec as vector)) AS similarity "
                 "FROM document_chunks dc "
                 "WHERE dc.embedding IS NOT NULL "
-                "ORDER BY dc.embedding <=> :vec "
+                "ORDER BY dc.embedding <=> cast(:vec as vector) "
                 "LIMIT :limit"
             )
             vec_result = await self._session.execute(
@@ -72,20 +72,18 @@ class SearchService:
     async def _bm25_search(self, q: str, limit: int) -> list[tuple[str, float]]:
         q_clean = re.sub(r"[@.]", " ", q)
         try:
-            bind = cast(AsyncEngine, self._session.get_bind())
-            async with bind.connect() as conn:
-                bm25_result = await conn.execute(
-                    text(
-                        "SELECT dc.id, "
-                        "ts_rank(dc.search_doc, websearch_to_tsquery('simple', :q)) AS score "
-                        "FROM document_chunks dc "
-                        "WHERE dc.search_doc @@ websearch_to_tsquery('simple', :q) "
-                        "ORDER BY score DESC "
-                        "LIMIT :limit"
-                    ),
-                    {"q": q_clean, "limit": limit},
-                )
-                return [(row["id"], float(row["score"])) for row in bm25_result.mappings()]
+            bm25_result = await self._session.execute(
+                text(
+                    "SELECT dc.id, "
+                    "ts_rank(dc.search_doc, websearch_to_tsquery('simple', :q)) AS score "
+                    "FROM document_chunks dc "
+                    "WHERE dc.search_doc @@ websearch_to_tsquery('simple', :q) "
+                    "ORDER BY score DESC "
+                    "LIMIT :limit"
+                ),
+                {"q": q_clean, "limit": limit},
+            )
+            return [(row["id"], float(row["score"])) for row in bm25_result.mappings()]
         except Exception:
             logger.warning("BM25 search failed", exc_info=True)
             return []

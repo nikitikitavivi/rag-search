@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from typing import cast
 from uuid import UUID
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -64,18 +66,39 @@ class DocumentService:
             chunks_text = _splitter.split_text(payload.content)
 
             doc_context = ""
-            if self._llm_service.is_available:
-                doc_context = await self._llm_service.document_context(
-                    payload.title, payload.content
-                )
-
             per_chunk_enrichments: list[str] = []
-            for chunk_text in chunks_text:
-                questions: list[str] = []
-                if self._llm_service.is_available:
-                    questions = await self._llm_service.hypothetical_questions(chunk_text)
-                enriched = _build_enriched_text(doc_context, questions, chunk_text)
-                per_chunk_enrichments.append(enriched)
+
+            if self._llm_service.is_available:
+                tasks = [
+                    self._llm_service.document_context(payload.title, payload.content),
+                ] + [
+                    self._llm_service.hypothetical_questions(chunk)
+                    for chunk in chunks_text
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                doc_context_raw = results[0]
+                if isinstance(doc_context_raw, BaseException):
+                    logger.warning("Document context generation failed", exc_info=doc_context_raw)
+                else:
+                    doc_context = cast(str, doc_context_raw)
+
+                for i, chunk_text in enumerate(chunks_text):
+                    qs_raw = results[i + 1]
+                    questions: list[str] = []
+                    if isinstance(qs_raw, BaseException):
+                        logger.warning(
+                            "Hypothetical questions failed for chunk %d", i, exc_info=qs_raw
+                        )
+                    else:
+                        questions = cast(list[str], qs_raw)
+                    per_chunk_enrichments.append(
+                        _build_enriched_text(doc_context, questions, chunk_text)
+                    )
+            else:
+                per_chunk_enrichments = [
+                    _build_enriched_text("", [], chunk) for chunk in chunks_text
+                ]
 
             embeddings: list[list[float] | None] = [None] * len(chunks_text)
             if self._emb_service.is_available and per_chunk_enrichments:

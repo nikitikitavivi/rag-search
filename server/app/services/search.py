@@ -1,17 +1,17 @@
+import asyncio
 import logging
 import re
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.services.embeddings import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
 RRF_K = 60
-MIN_SCORE = 0.005
 VECTOR_SIMILARITY_THRESHOLD = 0.35
 
 
@@ -42,67 +42,97 @@ class SearchService:
         rows = result.mappings().all()
         return [dict(r) for r in rows]
 
+    async def _vector_search(self, q: str, limit: int) -> list[tuple[str, float]]:
+        if not self._emb.is_available:
+            return []
+        try:
+            q_vec = await self._emb.embed(q)
+            stmt = text(
+                "SELECT dc.id, "
+                "1 - (dc.embedding <=> :vec) AS similarity "
+                "FROM document_chunks dc "
+                "WHERE dc.embedding IS NOT NULL "
+                "ORDER BY dc.embedding <=> :vec "
+                "LIMIT :limit"
+            )
+            vec_result = await self._session.execute(
+                stmt,
+                {"vec": q_vec.tolist() if hasattr(q_vec, "tolist") else q_vec, "limit": limit},
+            )
+            hits: list[tuple[str, float]] = []
+            for row in vec_result.mappings():
+                sim = float(row["similarity"])
+                if sim >= VECTOR_SIMILARITY_THRESHOLD:
+                    hits.append((row["id"], sim))
+            return hits
+        except Exception:
+            logger.warning("Vector search failed", exc_info=True)
+            return []
+
+    async def _bm25_search(self, q: str, limit: int) -> list[tuple[str, float]]:
+        q_clean = re.sub(r"[@.]", " ", q)
+        try:
+            bind = cast(AsyncEngine, self._session.get_bind())
+            async with bind.connect() as conn:
+                bm25_result = await conn.execute(
+                    text(
+                        "SELECT dc.id, "
+                        "ts_rank(dc.search_doc, websearch_to_tsquery('simple', :q)) AS score "
+                        "FROM document_chunks dc "
+                        "WHERE dc.search_doc @@ websearch_to_tsquery('simple', :q) "
+                        "ORDER BY score DESC "
+                        "LIMIT :limit"
+                    ),
+                    {"q": q_clean, "limit": limit},
+                )
+                return [(row["id"], float(row["score"])) for row in bm25_result.mappings()]
+        except Exception:
+            logger.warning("BM25 search failed", exc_info=True)
+            return []
+
+    @staticmethod
+    def _rrf_merge(
+        vector_hits: list[tuple[str, float]],
+        bm25_hits: list[tuple[str, float]],
+    ) -> dict[str, float]:
+        scores: dict[str, float] = {}
+        for rank, (chunk_id, _) in enumerate(vector_hits, start=1):
+            cid = str(chunk_id)
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (RRF_K + rank)
+        for rank, (chunk_id, _) in enumerate(bm25_hits, start=1):
+            cid = str(chunk_id)
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (RRF_K + rank)
+        return scores
+
     async def search_documents_rrf(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         q = query.strip()
         if not q:
             return []
 
-        vector_hits: list[tuple[str, float]] = []
-        if self._emb.is_available:
-            try:
-                q_vec = await self._emb.embed(q)
-                vec_str = "[" + ",".join(str(float(v)) for v in q_vec) + "]"
-                stmt = text(
-                    "SELECT dc.id, "
-                    "1 - (dc.embedding <=> cast(:vec as vector)) AS similarity "
-                    "FROM document_chunks dc "
-                    "WHERE dc.embedding IS NOT NULL "
-                    "ORDER BY dc.embedding <=> cast(:vec as vector) "
-                    "LIMIT :limit"
-                )
-                vec_result = await self._session.execute(
-                    stmt,
-                    {"vec": vec_str, "limit": limit * 2},
-                )
-                for row in vec_result.mappings():
-                    sim = float(row["similarity"])
-                    if sim >= VECTOR_SIMILARITY_THRESHOLD:
-                        vector_hits.append((row["id"], sim))
-            except Exception:
-                logger.warning("Vector search failed", exc_info=True)
+        results = await asyncio.gather(
+            self._vector_search(q, limit * 2),
+            self._bm25_search(q, limit * 2),
+            return_exceptions=True,
+        )
 
-        q_clean = re.sub(r"[@.]", " ", q)
-        bm25_hits: list[tuple[str, float]] = []
-        try:
-            bm25_result = await self._session.execute(
-                text(
-                    "SELECT dc.id, "
-                    "ts_rank(dc.search_doc, websearch_to_tsquery('simple', :q)) AS score "
-                    "FROM document_chunks dc "
-                    "WHERE dc.search_doc @@ websearch_to_tsquery('simple', :q) "
-                    "ORDER BY score DESC "
-                    "LIMIT :limit"
-                ),
-                {"q": q_clean, "limit": limit * 2},
-            )
-            for row in bm25_result.mappings():
-                bm25_hits.append((row["id"], float(row["score"])))
-        except Exception:
-            logger.warning("BM25 search failed", exc_info=True)
+        vector_hits: list[tuple[str, float]] = results[0] if isinstance(results[0], list) else []
+        bm25_hits: list[tuple[str, float]] = results[1] if isinstance(results[1], list) else []
 
-        rrf_scores: dict[str, float] = {}
-        for rank, (chunk_id, _) in enumerate(vector_hits, start=1):
-            rrf_scores[str(chunk_id)] = rrf_scores.get(str(chunk_id), 0.0) + 1.0 / (RRF_K + rank)
-        for rank, (chunk_id, _) in enumerate(bm25_hits, start=1):
-            rrf_scores[str(chunk_id)] = rrf_scores.get(str(chunk_id), 0.0) + 1.0 / (RRF_K + rank)
-
-        sorted_ids = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
-        if not sorted_ids:
+        if not vector_hits and not bm25_hits:
             return []
 
-        rank_map = {chunk_id: i for i, (chunk_id, _) in enumerate(sorted_ids)}
+        rrf_scores = self._rrf_merge(vector_hits, bm25_hits)
+
+        sorted_ids = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
         id_list = [uuid.UUID(chunk_id) for chunk_id, _ in sorted_ids]
 
+        return await self._fetch_document_chunks(id_list, rrf_scores)
+
+    async def _fetch_document_chunks(
+        self,
+        ids: list[uuid.UUID],
+        scores: dict[str, float],
+    ) -> list[dict[str, Any]]:
         docs_result = await self._session.execute(
             text(
                 "SELECT dc.id, dc.document_id, dc.content, dc.chunk_index, "
@@ -111,7 +141,7 @@ class SearchService:
                 "JOIN documents d ON d.id = dc.document_id "
                 "WHERE dc.id = ANY(:ids)"
             ),
-            {"ids": id_list},
+            {"ids": ids},
         )
         rows = []
         for row in docs_result.mappings():
@@ -124,9 +154,8 @@ class SearchService:
                     "title": row["title"],
                     "chunk_index": row["chunk_index"],
                     "content": row["content"],
-                    "score": rrf_scores[chunk_id],
+                    "score": scores[chunk_id],
                 }
             )
-        rows.sort(key=lambda r: rank_map[str(r["id"])])
-        rows = [r for r in rows if r["score"] >= MIN_SCORE]
+        rows.sort(key=lambda r: scores.get(str(r["id"]), 0), reverse=True)
         return rows

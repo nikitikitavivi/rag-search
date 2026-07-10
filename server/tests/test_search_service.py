@@ -6,7 +6,7 @@ import pytest
 from app.models.client import Client
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
-from app.services.search import MIN_SCORE, SearchService
+from app.services.search import SearchService
 
 
 def _unavailable_emb():
@@ -223,29 +223,4 @@ async def test_search_documents_rrf_respects_limit(db_session):
     assert len(results) <= 2
 
 
-@pytest.mark.asyncio
-async def test_search_documents_rrf_filters_below_min_score(db_session):
-    """Results with score below MIN_SCORE are excluded."""
-    client = Client(first_name="Hal", last_name="Ives", email="hal@example.com")
-    db_session.add(client)
-    await db_session.flush()
 
-    doc = Document(client_id=client.id, title="Receipt", content="Store receipt.")
-    db_session.add(doc)
-    await db_session.flush()
-
-    chunk = DocumentChunk(
-        document_id=doc.id,
-        chunk_index=0,
-        content="Store receipt.",
-        search_text="Receipt\nStore receipt.",
-    )
-    db_session.add(chunk)
-    await db_session.commit()
-
-    mock_emb = _available_emb(query_vec=np.ones(1536, dtype=np.float32))
-    service = SearchService(db_session, mock_emb)
-    results = await service.search_documents_rrf("totallyunrelatedquery", limit=10)
-
-    for r in results:
-        assert r["score"] >= MIN_SCORE

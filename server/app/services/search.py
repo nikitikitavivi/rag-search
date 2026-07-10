@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import re
 import uuid
@@ -42,52 +41,6 @@ class SearchService:
         rows = result.mappings().all()
         return [dict(r) for r in rows]
 
-    async def _vector_search(self, q: str, limit: int) -> list[tuple[str, float]]:
-        if not self._emb.is_available:
-            return []
-        try:
-            q_vec = await self._emb.embed(q)
-            stmt = text(
-                "SELECT dc.id, "
-                "1 - (dc.embedding <=> cast(:vec as vector)) AS similarity "
-                "FROM document_chunks dc "
-                "WHERE dc.embedding IS NOT NULL "
-                "ORDER BY dc.embedding <=> cast(:vec as vector) "
-                "LIMIT :limit"
-            )
-            vec_result = await self._session.execute(
-                stmt,
-                {"vec": q_vec.tolist() if hasattr(q_vec, "tolist") else q_vec, "limit": limit},
-            )
-            hits: list[tuple[str, float]] = []
-            for row in vec_result.mappings():
-                sim = float(row["similarity"])
-                if sim >= VECTOR_SIMILARITY_THRESHOLD:
-                    hits.append((row["id"], sim))
-            return hits
-        except Exception:
-            logger.warning("Vector search failed", exc_info=True)
-            return []
-
-    async def _bm25_search(self, q: str, limit: int) -> list[tuple[str, float]]:
-        q_clean = re.sub(r"[@.]", " ", q)
-        try:
-            bm25_result = await self._session.execute(
-                text(
-                    "SELECT dc.id, "
-                    "ts_rank(dc.search_doc, websearch_to_tsquery('simple', :q)) AS score "
-                    "FROM document_chunks dc "
-                    "WHERE dc.search_doc @@ websearch_to_tsquery('simple', :q) "
-                    "ORDER BY score DESC "
-                    "LIMIT :limit"
-                ),
-                {"q": q_clean, "limit": limit},
-            )
-            return [(row["id"], float(row["score"])) for row in bm25_result.mappings()]
-        except Exception:
-            logger.warning("BM25 search failed", exc_info=True)
-            return []
-
     @staticmethod
     def _rrf_merge(
         vector_hits: list[tuple[str, float]],
@@ -107,19 +60,53 @@ class SearchService:
         if not q:
             return []
 
-        results = await asyncio.gather(
-            self._vector_search(q, limit * 2),
-            self._bm25_search(q, limit * 2),
-            return_exceptions=True,
-        )
+        vector_hits: list[tuple[str, float]] = []
+        if self._emb.is_available:
+            try:
+                q_vec = await self._emb.embed(q)
+                vec_str = "[" + ",".join(str(float(v)) for v in q_vec) + "]"
+                stmt = text(
+                    "SELECT dc.id, "
+                    "1 - (dc.embedding <=> cast(:vec as vector)) AS similarity "
+                    "FROM document_chunks dc "
+                    "WHERE dc.embedding IS NOT NULL "
+                    "ORDER BY dc.embedding <=> cast(:vec as vector) "
+                    "LIMIT :limit"
+                )
+                vec_result = await self._session.execute(
+                    stmt,
+                    {"vec": vec_str, "limit": limit * 2},
+                )
+                for row in vec_result.mappings():
+                    sim = float(row["similarity"])
+                    if sim >= VECTOR_SIMILARITY_THRESHOLD:
+                        vector_hits.append((row["id"], sim))
+            except Exception:
+                logger.warning("Vector search failed", exc_info=True)
 
-        vector_hits: list[tuple[str, float]] = results[0] if isinstance(results[0], list) else []
-        bm25_hits: list[tuple[str, float]] = results[1] if isinstance(results[1], list) else []
-
-        if not vector_hits and not bm25_hits:
-            return []
+        q_clean = re.sub(r"[@.]", " ", q)
+        bm25_hits: list[tuple[str, float]] = []
+        try:
+            bm25_result = await self._session.execute(
+                text(
+                    "SELECT dc.id, "
+                    "ts_rank(dc.search_doc, websearch_to_tsquery('simple', :q)) AS score "
+                    "FROM document_chunks dc "
+                    "WHERE dc.search_doc @@ websearch_to_tsquery('simple', :q) "
+                    "ORDER BY score DESC "
+                    "LIMIT :limit"
+                ),
+                {"q": q_clean, "limit": limit * 2},
+            )
+            for row in bm25_result.mappings():
+                bm25_hits.append((row["id"], float(row["score"])))
+        except Exception:
+            logger.warning("BM25 search failed", exc_info=True)
 
         rrf_scores = self._rrf_merge(vector_hits, bm25_hits)
+
+        if not rrf_scores:
+            return []
 
         sorted_ids = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
         id_list = [uuid.UUID(chunk_id) for chunk_id, _ in sorted_ids]
